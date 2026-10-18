@@ -36,12 +36,24 @@ for x in range(x0, x1 + 1, 5000):
 print(f"{len(plan)} squares: " + ", ".join(f"{t} ({s})" for t, s, _ in plan), flush=True)
 if "--dry-run" in sys.argv:
     sys.exit(0)
+# the catalogue's two download addresses (sample_ea's backend one, which served the 2021 zips, and download_ea's): the
+# 2020 survey's zips answered 404 at the first on 18 Oct 2026 though the catalogue lists them
+URLS = (TILE_URL, "https://environment.data.gov.uk/tiles/collections/survey/{product}/{year}/{res}/{tile}")
+failed = []
 for tile, survey, year in plan:
     dst = ROOT / "data" / "mk" / f"nlp{year}" / f"{tile}.zip"
+    for base in URLS:
+        if dst.exists():
+            break
+        try:
+            fetch_url(base.format(product="national_lidar_programme_point_cloud", year=year, res="1", tile=tile) + f"?subscription-key={KEY}",
+                      dst, attempts=3, timeout=1800)
+        except Exception as e:                                  # noqa: BLE001 - the next address, then the next square
+            print(f"{tile} {survey}: {base.split('/')[2]}{'/backend' if 'backend' in base else ''}: {e!r}"[:300], flush=True)
     if not dst.exists():
-        url = TILE_URL.format(product="national_lidar_programme_point_cloud", year=year, res="1", tile=tile) + f"?subscription-key={KEY}"
-        fetch_url(url, dst, attempts=3, timeout=1800)
+        failed.append(tile); continue
     with zipfile.ZipFile(dst) as zf:
         laz = [n for n in zf.namelist() if n.endswith(".laz")]
     ok = any(survey in n for n in laz)
     print(f"{tile} {survey}: {dst.stat().st_size:,} bytes, {laz}{'' if ok else '  NOT THIS SURVEY'}", flush=True)
+print(f"done; {len(failed)} squares not fetched: {', '.join(failed) or 'none'}", flush=True)

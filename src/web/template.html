@@ -136,8 +136,7 @@ h1 em { font-style: normal; color: var(--heat); }
   <div class="key">
     <h2 id="keyh"></h2>
     <div class="scale" id="scale"></div>
-    <div class="grey"><i></i><span>Built since the lidar survey of winter 2020–21, not modelled</span></div>
-    <div class="grey"><i class="u"></i><span>Under a bridge, roof or overhang: in shade all day</span></div>
+    <div class="grey"><i></i><span>Not modelled: built since the lidar flight, or under a bridge or roof</span></div>
   </div>
 </section>
 <dialog class="method" id="method" aria-labelledby="method-h">
@@ -261,7 +260,7 @@ const stops = SITE ? null : { type: 'FeatureCollection', features: D.stops.map((
   ({ type: 'Feature', geometry: { type: 'Point', coordinates: [s.x, s.y] }, properties: props(i, s.g, s.v, 'stops') })) };
 // a scenario's value where it changes the feature (the site's tiles hold only those), else the day as it was
 const pick = k => scen ? ['coalesce', ['get', k + '_' + scen], ['get', k]] : ['get', k];
-const dayCls = () => { const e = ['step', pick('d'), DCOLS[0]]; D.day.lo.slice(1).forEach((lo, k) => e.push(lo, DCOLS[k + 1])); return ['case', ['==', ['get', 'g'], 1], tok('--grey'), ['==', ['get', 'g'], 2], tok('--under'), e]; };
+const dayCls = () => { const e = ['step', pick('d'), DCOLS[0]]; D.day.lo.slice(1).forEach((lo, k) => e.push(lo, DCOLS[k + 1])); return ['case', ['==', ['get', 'g'], 1], tok('--grey'), ['==', ['get', 'g'], 2], tok('--grey'), e]; };
 const colour = () => mode === 'day' ? dayCls() : cls(hi);
 // the ground's image for the hour or the day: on the site one raster archive (ground/<name>.pmtiles), in the artifact
 // pieces of at most 4,096 px a side (package.py), each piece its own image source and layer
@@ -288,7 +287,7 @@ const cls = h => {
   D.classes.forEach((c, k) => { if (!k) return; const top = k + 1 < D.classes.length ? D.classes[k + 1].lo : 57, ch = [];
     for (let v = c.lo; v < top; v++) ch.push(String.fromCharCode(v + 35)); if (ch.length) e.push(ch, COLS[k]); });
   e.push(COLS[0]);
-  return ['case', ['==', ['get', 'g'], 1], tok('--grey'), ['==', ['get', 'g'], 2], tok('--under'), e];
+  return ['case', ['==', ['get', 'g'], 1], tok('--grey'), ['==', ['get', 'g'], 2], tok('--grey'), e];
 };
 const classOf = v => { let k = 0; D.classes.forEach((c, j) => { if (v >= c.lo) k = j; }); return k; };
 

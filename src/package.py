@@ -512,9 +512,7 @@ if mode == "utci":
     # explained under it; the shade figures say what changes it
     head = f"On the hottest day of the summer, <em>{round(path_day * 100)}%</em> of {OF_AREA} footpaths reached very strong heat stress."
     never = int(dstats["stops"][0]); most = max(int((np.array(st["v"]) >= hot_lo).sum()) for st in stops if not st["g"])
-    deck = (f"That is a feels-like temperature of 38 °C or more, for at least an hour. Shade makes the difference: from {ampm(hp)} to "
-            f"{ampm(hp + 1)}, with the air at {wx['temperature_2m'][wxi[hp]]:.0f} °C, open ground felt like {ms:.0f} °C in the sun and "
-            f"{mh:.0f} °C in the shade of a tree or building. {never} of the {n_stops} bus stops stayed below it all day.")
+    deck = "That is a feels-like temperature of 38 °C or more, for at least an hour."      # the definition only (Jacob: "you can cut this extra text out")
     key, unit = "Feels like (UTCI), °C", "°C"
     now_fmt, count_fmt = "Feels like {v} °C now.", "{n} of {N} hours at 38 °C or more."
 else:
