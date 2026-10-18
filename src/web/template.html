@@ -1,0 +1,546 @@
+<title>Milton Keynes in the Heat</title>
+<style>/*FONT_FACE*/</style>
+<style>/*MAPLIBRE_CSS*/</style>
+<style>
+/* Layout: the city fills the screen; one plain card holds the message, the three views and the hour.
+   One grotesque face throughout, in keeping with the new town's modernism. Single light theme on purpose:
+   a white basemap, so the heat colours carry the page. */
+:root {
+  color-scheme: light;
+  --ground: #f5f5f3; --paper: #ffffff; --ink: #1c1c1b; --muted: #66645f; --rule: #e2e0dc;
+  --heat: #b8361f;
+  --c0: #9dbdca; --c1: #f2d58c; --c2: #eea55a; --c3: #c8321f; --c4: #66172a; --grey: #9a968f;
+  --d0: #a9c3cc; --under: #4f6470; --d1: #f3cf8f; --d2: #e2803d; --d3: #a8281c;
+  --font: "Instrument Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+html, body { height: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 15px/1.4 var(--font); }
+#map { position: fixed; inset: 0; background: var(--ground); }
+.card {
+  position: fixed; z-index: 2; left: 16px; top: calc(16px + env(safe-area-inset-top, 0px)); width: min(420px, calc(50vw - 24px)); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px);
+  overflow: auto; background: var(--paper); border: 1px solid var(--rule); border-radius: 2px;
+  display: grid; gap: 10px; padding: 14px 18px 12px;
+}
+.when { font-size: 13px; color: var(--muted); }
+h1 { margin: 0; font: 600 24px/1.15 var(--font); letter-spacing: -.01em; text-wrap: balance; }
+h1 em { font-style: normal; color: var(--heat); }
+.deck { margin: 0; color: var(--muted); font-size: 14px; }
+.views { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.view {
+  appearance: none; text-align: left; cursor: pointer; background: var(--paper); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: 2px; padding: 8px 9px 9px; display: grid; gap: 3px; font: inherit;
+}
+.view:hover { border-color: var(--muted); }
+.view[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 -3px 0 var(--ink); }
+.view:focus-visible, .scrub:focus-visible, .x:focus-visible { outline: 2px solid var(--heat); outline-offset: 2px; }
+.view b { font-weight: 600; font-size: 13px; line-height: 1.15; }
+.view span { font: 600 21px/1 var(--font); font-variant-numeric: tabular-nums; }
+.view small { font-size: 12px; color: var(--muted); line-height: 1.2; }
+.day { display: grid; gap: 6px; }
+.dayhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.mode { display: inline-grid; grid-auto-flow: column; border: 1px solid var(--rule); border-radius: 2px; }
+.mode button { appearance: none; border: 0; background: var(--paper); color: var(--muted); font: 500 13px/1 var(--font); padding: 7px 10px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.mode button + button { border-left: 1px solid var(--rule); }
+.mode button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.mode button:focus-visible { outline: 2px solid var(--heat); outline-offset: 1px; }
+.scrub.idle { opacity: .45; }
+.scen { display: grid; gap: 6px; }
+.scnote { margin: 0; font-size: 12px; color: var(--muted); }
+.air { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+#bars { width: 100%; height: 54px; display: block; cursor: pointer; }
+.scrub { width: 100%; margin: 0; accent-color: var(--ink); }
+.ticks { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.key { display: grid; gap: 6px; border-top: 1px solid var(--rule); padding-top: 12px; }
+.key h2 { margin: 0; font-weight: 600; font-size: 13px; }
+.scale { display: grid; gap: 2px; }
+.scale i { height: 10px; display: block; }
+.scale span { font-size: 12px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.scale span.w { color: var(--muted); }
+.scale.fine { gap: 0; }
+.scale.fine i { height: 12px; }
+.scale.fine span { white-space: nowrap; overflow: visible; }
+.scale.fine .edge { border-left: 1px solid var(--ink); padding-left: 3px; }
+.grey { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.grey i { width: 22px; height: 12px; flex: none; border: 1px solid var(--grey);
+  background: repeating-linear-gradient(135deg, var(--grey) 0 1.5px, transparent 1.5px 5px); }
+.grey i.u { height: 4px; border: 0; background: var(--under); border-radius: 2px; }
+.src { margin: 0 0 12px; }
+.maplibregl-ctrl-attrib, .maplibregl-ctrl-attrib a { font: 11px/1.35 var(--font); color: var(--muted); }
+.maplibregl-ctrl-scale { font: 12px/1.3 var(--font); color: var(--ink); }
+.maplibregl-ctrl-attrib.maplibregl-compact { min-height: 22px; }
+.maplibregl-popup-content { font: 13px/1.35 var(--font); color: var(--ink); padding: 12px 14px; border-radius: 2px; box-shadow: 0 2px 10px rgba(28, 28, 27, .18); }
+.pop h3 { margin: 0 0 2px; font-weight: 600; font-size: 15px; line-height: 1.2; }
+.pop p { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+.tt { display: grid; grid-template-columns: repeat(var(--n), 1fr); gap: 1px; min-width: 238px; }
+.tt i { height: 16px; display: block; }
+.tt i.on { outline: 2px solid var(--ink); outline-offset: -1px; }
+.tt span { font-size: 11px; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+.pop .sum { margin: 8px 0 0; color: var(--ink); font-size: 12.5px; }
+.x { justify-self: start; appearance: none; background: none; border: 0; padding: 0; font: 500 12px var(--font); color: var(--muted); text-decoration: underline; cursor: pointer; }
+/* how the map was made, with its sources, in a panel over the map: inside the card it overfilled a laptop's screen
+   (Jacob, 18 Oct 2026: "perhaps a popup, or some better method please?"); the card keeps the headline and the line
+   that explains it */
+.links { display: flex; gap: 16px; align-items: baseline; }
+.links a.x { color: var(--muted); }
+.method a { color: var(--ink); }
+.method { border: 1px solid var(--rule); border-radius: 4px; padding: 20px 22px 18px; width: min(560px, calc(100vw - 32px));
+  max-height: calc(100% - 64px); overflow: auto; color: var(--ink); background: var(--paper); font: 14px/1.5 var(--font); }
+.method::backdrop { background: rgba(28, 28, 27, .35); }
+.method h2 { margin: 0 0 10px; font: 600 18px/1.2 var(--font); }
+.method .cred { margin: 0 0 14px; font-size: 12px; line-height: 1.4; color: var(--muted); }
+.method button { appearance: none; border: 1px solid var(--rule); border-radius: 2px; background: var(--paper); color: var(--ink); font: 500 13px/1 var(--font); padding: 8px 12px; cursor: pointer; }
+.method button:focus-visible { outline: 2px solid var(--heat); outline-offset: 2px; }
+/* a laptop's window is often under 800 px tall (Jacob, 18 Oct 2026: "left sidebar doesn't fit on a regular laptop
+   screen") */
+@media (min-width: 641px) and (max-height: 860px) {
+  h1 { font-size: 22px; }
+}
+@media (min-width: 641px) and (max-height: 760px) {
+  .card { gap: 8px; padding-top: 12px; }
+  h1 { font-size: 21px; }
+  .deck { font-size: 13px; line-height: 1.35; }
+  .scnote { font-size: 11.5px; line-height: 1.3; }
+  .view { padding: 6px 8px 7px; }
+  #bars { height: 46px; }
+  .key { gap: 4px; padding-top: 8px; }
+}
+@media (max-width: 640px) {
+  .card { left: 0; right: 0; top: auto; bottom: 0; width: auto; max-height: 58%; border-radius: 6px 6px 0 0; padding: 14px 16px calc(12px + env(safe-area-inset-bottom, 0px)); gap: 11px; }
+  h1 { font-size: 20px; }
+  .view span { font-size: 18px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div id="map" role="region" aria-label="Map of Milton Keynes"></div>
+<section class="card" id="card" aria-label="About this map">
+  <div class="when" id="when">Milton Keynes, Thursday 13 August 2026</div>
+  <h1 id="h1">Loading the hottest day of the summer…</h1>
+  <p class="deck" id="deck"></p>
+  <div class="links"><button class="x" id="more" type="button">How this was made</button><a class="x" href="https://github.com/JacobWeinbren/mk-heat" target="_blank" rel="noopener">The code</a></div>
+  <div class="views" role="group" aria-label="What to show">
+    <button class="view" type="button" data-v="ground" aria-pressed="false"><b>Open ground</b><span id="n-ground">–</span><small id="s-ground"></small></button>
+    <button class="view" type="button" data-v="paths" aria-pressed="true"><b>Footpaths</b><span id="n-paths">–</span><small id="s-paths"></small></button>
+    <button class="view" type="button" data-v="stops" aria-pressed="false"><b>Bus stops</b><span id="n-stops">–</span><small id="s-stops"></small></button>
+  </div>
+  <div class="scen" id="scen" hidden>
+    <div class="mode" role="group" aria-label="Which Thursday" id="scbtns"><button type="button" data-s="" aria-pressed="true">As it was</button></div>
+    <p class="scnote" id="scnote" hidden></p>
+  </div>
+  <div class="day">
+    <div class="dayhead"><div class="mode" role="group" aria-label="Time"><button type="button" id="m-day" aria-pressed="true">Whole day</button><button type="button" id="m-hour" aria-pressed="false">3pm–4pm</button></div><span class="air" id="air"></span></div>
+    <canvas id="bars" aria-hidden="true"></canvas>
+    <input class="scrub" id="hour" type="range" min="0" max="0" step="1" value="0" aria-label="Time of day">
+    <div class="ticks" id="ticks"></div>
+  </div>
+  <div class="key">
+    <h2 id="keyh"></h2>
+    <div class="scale" id="scale"></div>
+    <div class="grey"><i></i><span>Built since the lidar survey of winter 2020–21, not modelled</span></div>
+    <div class="grey"><i class="u"></i><span>Under a bridge, roof or overhang: in shade all day</span></div>
+  </div>
+</section>
+<dialog class="method" id="method" aria-labelledby="method-h">
+  <h2 id="method-h">How this was made</h2>
+  <p class="src" id="src"></p>
+  <p class="cred" id="cred"></p>
+  <p class="cred">The code and its references: <a href="https://github.com/JacobWeinbren/mk-heat" target="_blank" rel="noopener">github.com/JacobWeinbren/mk-heat</a></p>
+  <button type="button" id="close">Close</button>
+</dialog>
+
+<script src="__MAPLIBRE_JS__"></script>
+<script src="__PMTILES_JS__"></script>
+<script>
+(async () => {
+const css = getComputedStyle(document.documentElement), tok = k => css.getPropertyValue(k).trim();
+// two builds of one page (build.py): 'site', for a host that serves byte ranges, reads every map layer from PMTiles
+// (the basemap, the footpaths, stops, greyed areas and new trees as vector tiles, the ground as raster tiles), so a
+// visitor fetches only the tiles in view (Jacob, 18 Oct 2026: "serve as much as you can via pmtiles"); 'artifact', for
+// claude.ai, which serves no .pmtiles, carries the basemap and the label font as text and the footpaths as JSON.
+// Every file is asked for with its own content's hash (V), so it can be kept a year and a new build fetches only what
+// changed
+const MODE = '__MODE__', SITE = MODE === 'site', V = __VERS__;
+const u = p => p + (V[p] ? '?v=' + V[p] : '');
+// build.py's compact copy: an hourly value list is one character an hour (value + 35), kept so: the map reads an hour's
+// character with a slice, which keeps each footpath to one property a day rather than one an hour (the scenarios' would
+// cost a phone seconds to hand to the map); tree positions are steps of 1e-5 degrees
+const un = t => Array.from(t, c => c.charCodeAt(0) - 35);
+function decode(d) {
+  for (const S of Object.values(d.scenarios || {})) {
+    if (!S.trees) continue;                           // the site's scenarios hold no trees: they are vector tiles
+    const t = S.trees, pts = []; let x = 0, y = 0;
+    for (let i = 0; i < t.length; i += 2) { x += t[i]; y += t[i + 1]; pts.push([x / 1e5, y / 1e5]); }
+    S.trees = pts;
+  }
+  return d;
+}
+const [D, basemap, GLYPHS] = await Promise.all([fetch(u(SITE ? 'meta.json' : 'data_web.json')).then(r => r.json()).then(decode),
+  SITE ? null : fetch(u('basemap.txt')).then(r => r.text()).then(t => {   // a plain loop: Uint8Array.from calls its map function once a byte
+    const b = atob(t.trim()), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a.buffer; }),
+  SITE ? null : fetch(u('glyphs.json')).then(r => r.json())]);
+const COLS = D.colors.map(c => c.startsWith('--') ? tok(c) : c), NH = D.hours.length, VIEWS = ['ground', 'paths', 'stops'];
+let view = 'paths', hi = D.start, mode = 'day', pop = null, ready = false;
+// the alternative Thursdays (package.py --scenario NAME, one entry each): their own values, figures and images
+const SCS = D.scenarios || {}; let scen = '';
+const SC = () => scen ? SCS[scen] : null;
+const ST = () => scen ? SCS[scen].stats : D.stats, DST = () => scen ? SCS[scen].day_stats : D.day.stats;
+// a scenario holds only the pieces and stops it changes ({index: values}); the first pass's values stand elsewhere
+const pathVals = i => un((scen && SCS[scen].paths[i]) || D.paths[i][1]), stopVals = i => un((scen && SCS[scen].stops[i]) || D.stops[i].v);
+const DCOLS = D.day.colors.map(tok), HOT = D.classes[D.hot].lo;
+
+document.getElementById('when').textContent = `${D.area}, Thursday 13 August 2026`;
+document.getElementById('h1').innerHTML = D.headline;
+document.getElementById('deck').textContent = D.deck;
+document.getElementById('src').innerHTML = D.sources;
+document.getElementById('keyh').textContent = D.key;
+const scale = document.getElementById('scale');
+function drawKey() {
+  scale.classList.remove('fine');
+  if (mode === 'day') {
+    document.getElementById('keyh').textContent = 'Hours that felt like 38 °C or more';
+    scale.style.gridTemplateColumns = `repeat(${DCOLS.length}, 1fr)`;
+    scale.innerHTML = DCOLS.map(c => `<i style="background:${c}"></i>`).join('') + D.day.labels.map(l => `<span>${l}</span>`).join('');
+  } else {
+    document.getElementById('keyh').textContent = D.key;
+    scale.style.gridTemplateColumns = `repeat(${COLS.length}, 1fr)`;
+    scale.classList.toggle('fine', COLS.length > 6);
+    scale.innerHTML = COLS.map(c => `<i style="background:${c}"></i>`).join('') + D.classes.map(c => `<span>${c.label}</span>`).join('')
+      + D.classes.map(c => `<span class="w${c.words ? ' edge' : ''}">${c.words || ''}</span>`).join('');
+  }
+}
+// the method panel closes on its button, Escape (the dialog's own) or a click outside it
+const dlg = document.getElementById('method');
+document.getElementById('cred').textContent = D.credits;
+document.getElementById('more').onclick = () => dlg.showModal();
+document.getElementById('close').onclick = () => dlg.close();
+dlg.addEventListener('click', ev => { const r = dlg.getBoundingClientRect();
+  if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) dlg.close(); });
+
+// PMTiles archives: on the site each read in byte ranges from its file, once registered; in the artifact the basemap
+// from memory
+const protocol = new pmtiles.Protocol();
+maplibregl.addProtocol('pmtiles', protocol.tile);
+const archives = {};
+const TS = __TILES__;                                // each archive's address (site.py: R2, at maps.weinbren.me)
+const tiles = k => { if (!archives[k]) { const t = new pmtiles.PMTiles(TS[k]); protocol.add(t); archives[k] = 'pmtiles://' + t.source.getKey(); } return archives[k]; };
+class Mem { getKey() { return 'mk'; } async getBytes(o, l) { return { data: basemap.slice(o, o + l) }; } }
+if (!SITE) protocol.add(new pmtiles.PMTiles(new Mem()));
+// the label font (Protomaps' Noto Sans glyphs): the site's one file a face and range, the artifact's one file of all;
+// a range it lacks comes back empty
+maplibregl.addProtocol('glyphs', async params => {
+  const [stack, range] = decodeURIComponent(params.url.slice('glyphs://'.length)).split('/');
+  const face = stack.split(',')[0];
+  if (SITE) {
+    const f = `glyphs/${face.replace(/ /g, '_')}_${range}.pbf`;
+    const r = V[f] ? await fetch(u(f)) : null;
+    return { data: r && r.ok ? await r.arrayBuffer() : new ArrayBuffer(0) };
+  }
+  const b64 = (GLYPHS[face] || {})[range];
+  return { data: b64 ? Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer : new ArrayBuffer(0) };
+});
+const HALO = { 'text-color': tok('--ink'), 'text-halo-color': '#ffffff', 'text-halo-width': 1.6, 'text-halo-blur': 0.4 };
+const kind = (...k) => ['in', ['get', 'kind'], ['literal', k]];
+const AREA = ['match', ['geometry-type'], ['Polygon', 'MultiPolygon'], true, false];
+
+// footpath pieces and stops from the compact file
+// a feature's properties: its day as it was (v, a character an hour) and each scenario's (v_NAME), with the hours at
+// 38 °C or more of each (d, d_NAME), so choosing a scenario only changes the colour rule
+const HOTC = String.fromCharCode(D.classes[D.hot].lo + 35);
+const hotHours = t => { let n = 0; for (const c of t) if (c >= HOTC) n++; return n; };
+function props(i, g, t, scs) {
+  const o = { i, g, v: t, d: hotHours(t) };
+  for (const nm in SCS) { const u = SCS[nm][scs][i] || t; o['v_' + nm] = u; o['d_' + nm] = u === t ? o.d : hotHours(u); }
+  return o;
+}
+const paths = SITE ? null : { type: 'FeatureCollection', features: D.paths.map((p, i) => {
+  const c = []; let x = 0, y = 0;
+  for (let k = 0; k < p[0].length; k += 2) { x += p[0][k]; y += p[0][k + 1]; c.push([x / 1e5, y / 1e5]); }
+  return { type: 'Feature', geometry: { type: 'LineString', coordinates: c }, properties: props(i, p[2], p[1], 'paths') };
+}) };
+const stops = SITE ? null : { type: 'FeatureCollection', features: D.stops.map((s, i) =>
+  ({ type: 'Feature', geometry: { type: 'Point', coordinates: [s.x, s.y] }, properties: props(i, s.g, s.v, 'stops') })) };
+// a scenario's value where it changes the feature (the site's tiles hold only those), else the day as it was
+const pick = k => scen ? ['coalesce', ['get', k + '_' + scen], ['get', k]] : ['get', k];
+const dayCls = () => { const e = ['step', pick('d'), DCOLS[0]]; D.day.lo.slice(1).forEach((lo, k) => e.push(lo, DCOLS[k + 1])); return ['case', ['==', ['get', 'g'], 1], tok('--grey'), ['==', ['get', 'g'], 2], tok('--under'), e]; };
+const colour = () => mode === 'day' ? dayCls() : cls(hi);
+// the ground's image for the hour or the day: on the site one raster archive (ground/<name>.pmtiles), in the artifact
+// pieces of at most 4,096 px a side (package.py), each piece its own image source and layer
+const groundName = (k = hi) => `${mode === 'day' ? 'day' : D.hours[k].file}${scen ? '-' + scen : ''}`;
+const groundUrl = (id, k = hi) => u(`ground/${groundName(k)}_${id}.png`);
+const PIECES = D.pieces;
+// the ground images load only while the ground view is shown (the city's are 3 MB an hour); else an empty pixel
+const BLANK = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=';
+const groundNow = id => view === 'ground' ? groundUrl(id) : BLANK;
+// an image is asked for only when it changes (asking again while one loads cancels that load)
+const showing = Object.fromEntries(PIECES.map(p => [p.id, BLANK]));
+let groundShown = '';
+const showGround = () => {
+  if (SITE) {
+    map.setLayoutProperty('ground', 'visibility', view === 'ground' ? 'visible' : 'none');
+    if (view === 'ground' && groundShown !== groundName()) { groundShown = groundName(); map.getSource('g').setUrl(tiles(`ground/${groundShown}`)); }
+    return;
+  }
+  PIECES.forEach(p => { const v = groundNow(p.id); if (v !== showing[p.id]) { showing[p.id] = v; map.getSource('g' + p.id).updateImage({ url: v, coordinates: p.corners }); } });
+};
+// an hour's colour: the hour's character matched to its class (build.py's characters are values -34 to 56)
+const cls = h => {
+  const e = ['match', ['slice', pick('v'), h, h + 1]];
+  D.classes.forEach((c, k) => { if (!k) return; const top = k + 1 < D.classes.length ? D.classes[k + 1].lo : 57, ch = [];
+    for (let v = c.lo; v < top; v++) ch.push(String.fromCharCode(v + 35)); if (ch.length) e.push(ch, COLS[k]); });
+  e.push(COLS[0]);
+  return ['case', ['==', ['get', 'g'], 1], tok('--grey'), ['==', ['get', 'g'], 2], tok('--under'), e];
+};
+const classOf = v => { let k = 0; D.classes.forEach((c, j) => { if (v >= c.lo) k = j; }); return k; };
+
+const [[w, s], [e, n]] = D.bounds, pw = (e - w) * 0.35, ph = (n - s) * 0.35;
+const BLDG_FADE = ['interpolate', ['linear'], ['zoom'], 15, 0, 16, 1];
+// where a layer of the model's own reads from: the site's vector archive (features.pmtiles) or the artifact's JSON
+const src = name => SITE ? { source: 'f', 'source-layer': name } : { source: name };
+const GROUND_PAINT = { 'raster-resampling': 'nearest', 'raster-fade-duration': 0 };
+const BLDG_PAINT = { 'raster-opacity': ['interpolate', ['linear'], ['zoom'], 12, 0.5, 14, 1], 'raster-resampling': 'nearest', 'raster-fade-duration': 0 };
+const style = {
+  version: 8,
+  glyphs: 'glyphs://{fontstack}/{range}',
+  sources: {
+    b: { type: 'vector', url: SITE ? tiles('basemap') : 'pmtiles://mk', attribution: D.credits },
+    ...(SITE ? {
+      f: { type: 'vector', url: tiles('features') },
+      g: { type: 'raster', url: tiles('ground/day'), tileSize: 512 },
+      bl: { type: 'raster', url: tiles('ground/bld'), tileSize: 512 },
+    } : {
+      ...Object.fromEntries(PIECES.flatMap(p => [['g' + p.id, { type: 'image', url: BLANK, coordinates: p.corners }],
+                                                  ['b' + p.id, { type: 'image', url: u(`ground/bld_${p.id}.png`), coordinates: p.corners }]])),
+      // every piece at every zoom: MapLibre's default tolerance (0.375 px) drops a line shorter than about half a pixel,
+      // so the city's 25 m pieces vanished below zoom 11 (the whole city on a phone opens at 9.9)
+      paths: { type: 'geojson', data: paths, tolerance: 0 },
+      stops: { type: 'geojson', data: stops },
+      grey: { type: 'geojson', data: D.grey },
+      trees: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
+    }),
+  },
+  layers: [
+    { id: 'bg', type: 'background', paint: { 'background-color': tok('--ground') } },
+    // fills take polygons only: a fill layer closes a line into a shape, and the water layer holds rivers and canals as
+    // lines, which drew as wide blue wedges (Jacob, 18 Oct 2026: "the zoomed out map's style is glitchy see the floating
+    // blu chunks"); the lines are drawn as lines
+    { id: 'green', type: 'fill', source: 'b', 'source-layer': 'landuse', filter: ['all', AREA, kind('park', 'recreation_ground', 'golf_course', 'cemetery', 'garden', 'pitch', 'playground', 'nature_reserve', 'wood', 'forest', 'grass', 'village_green')], paint: { 'fill-color': '#edf0e9' } },
+    { id: 'water', type: 'fill', source: 'b', 'source-layer': 'water', filter: AREA, paint: { 'fill-color': '#dce7ed' } },
+    { id: 'water-line', type: 'line', source: 'b', 'source-layer': 'water', filter: ['!', AREA],
+      paint: { 'line-color': '#c9dbe5', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.6, 15, 2] } },
+    ...(SITE ? [{ id: 'ground', type: 'raster', source: 'g', layout: { visibility: 'none' }, paint: GROUND_PAINT }]
+      : PIECES.map(p => ({ id: 'ground' + p.id, type: 'raster', source: 'g' + p.id, paint: { 'raster-opacity': 0, ...GROUND_PAINT } }))),
+    { id: 'road-case', type: 'line', source: 'b', 'source-layer': 'roads', filter: kind('highway', 'major_road', 'minor_road'),
+      paint: { 'line-color': '#e6e4df', 'line-width': ['interpolate', ['exponential', 1.6], ['zoom'], 12, 1.2, 18, 16] } },
+    { id: 'road', type: 'line', source: 'b', 'source-layer': 'roads', filter: kind('highway', 'major_road', 'minor_road'),
+      paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['exponential', 1.6], ['zoom'], 12, 0.6, 18, 13] } },
+    { id: 'rail', type: 'line', source: 'b', 'source-layer': 'roads', filter: kind('rail'), paint: { 'line-color': '#bdb9b2', 'line-width': 1.2 } },
+    // buildings fade in over zoom 15 to 16: the basemap holds them all only from its zoom 15 tiles
+    // buildings as the model saw them (2021 lidar), in every view; OSM's outlines are incomplete here
+    ...(SITE ? [{ id: 'bldg', type: 'raster', source: 'bl', paint: BLDG_PAINT }]
+      : PIECES.map(p => ({ id: 'bldg' + p.id, type: 'raster', source: 'b' + p.id, paint: BLDG_PAINT }))),
+    { id: 'grey', type: 'fill', ...src('grey'), paint: { 'fill-pattern': 'hatch', 'fill-opacity': 0.9 } },
+    { id: 'grey-line', type: 'line', ...src('grey'), paint: { 'line-color': tok('--grey'), 'line-width': 0.8 } },
+    { id: 'paths-case', type: 'line', ...src('paths'), layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 14, 5.5, 17, 10], 'line-opacity': 1 } },
+    { id: 'paths', type: 'line', ...src('paths'), layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': dayCls(), 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.6, 14, 3.2, 17, 7], 'line-opacity': 1 } },
+    // the scenario's new trees, from zoom 15 only and half see-through, so the colours beneath show what they change
+    // (Jacob, 18 Oct 2026: "the trees cover the map so it is hard to see their effect"); true size from zoom 17
+    { id: 'trees', type: 'circle', ...src('trees'), minzoom: 15, layout: { visibility: 'none' },
+      paint: { 'circle-color': '#2f5a2b', 'circle-opacity': 0.55, 'circle-radius': ['interpolate', ['exponential', 2], ['zoom'], 15, 1.5, 17, 3.4, 18, 6.8] } },
+    { id: 'stops', type: 'circle', ...src('stops'),
+      paint: { 'circle-color': dayCls(), 'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 4, 14, 6.5, 17, 11],
+               'circle-stroke-color': tok('--ink'), 'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 12, 0.6, 16, 1.2], 'circle-opacity': 0, 'circle-stroke-opacity': 0 } },
+    // names, all from the basemap (Protomaps' min_zoom ranks them: lower is more important and wins a clash); a higher
+    // layer wins over a lower one: places, then parks and lakes, then landmarks, then roads
+    ...['major_road', 'minor_road'].map((k, n) => ({ id: 'lab-' + k, type: 'symbol', source: 'b', 'source-layer': 'roads', minzoom: n ? 16 : 14,
+      filter: ['all', ['has', 'name'], ['==', ['get', 'kind'], k]],
+      layout: { 'symbol-placement': 'line', 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Medium'], 'text-size': 13, 'symbol-spacing': 420, 'text-padding': 4 },
+      paint: { ...HALO, 'text-color': '#4d4b46' } })),
+    { id: 'lab-landmark', type: 'symbol', source: 'b', 'source-layer': 'pois', minzoom: 13,
+      filter: ['all', ['has', 'name'], ['in', ['get', 'kind'], ['literal', ['mall', 'station', 'train_station', 'hospital', 'university', 'museum', 'theatre', 'music_venue', 'stadium', 'marketplace', 'retail', 'cinema', 'arts_centre', 'theme_park']]]],
+      layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Medium'], 'text-size': 13, 'text-padding': 6, 'text-max-width': 9, 'symbol-sort-key': ['get', 'min_zoom'] },
+      paint: { ...HALO } },
+    { id: 'lab-green', type: 'symbol', source: 'b', 'source-layer': 'pois', minzoom: 12,
+      filter: ['all', ['has', 'name'], ['in', ['get', 'kind'], ['literal', ['park', 'nature_reserve', 'wood', 'forest', 'garden', 'water', 'lake', 'reservoir']]]],
+      layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Italic'], 'text-size': 13.5, 'text-padding': 6, 'text-max-width': 9, 'symbol-sort-key': ['get', 'min_zoom'] },
+      paint: { ...HALO, 'text-color': ['match', ['get', 'kind'], ['water', 'lake', 'reservoir'], '#3f6a84', '#466041'] } },
+    { id: 'lab-place', type: 'symbol', source: 'b', 'source-layer': 'places',
+      filter: ['all', ['has', 'name'], ['in', ['get', 'kind'], ['literal', ['locality', 'neighbourhood']]], ['!=', ['get', 'name'], 'Milton Keynes']],
+      layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Medium'], 'text-padding': 8, 'text-max-width': 9, 'symbol-sort-key': ['get', 'min_zoom'],
+                'text-size': ['match', ['get', 'kind_detail'], ['city', 'town'], 17, 14.5] },
+      paint: { ...HALO } },
+  ],
+};
+// on a phone the card covers the bottom of the screen: the city fits in the space above it
+const fitPad = () => innerWidth > 640 ? { left: document.getElementById('card').offsetWidth + 32, right: 30, top: 30, bottom: 30 } : { left: 10, right: 10, top: 10, bottom: document.getElementById('card').offsetHeight + 10 };
+const map = new maplibregl.Map({ container: 'map', style, bounds: D.bounds, fitBoundsOptions: { padding: fitPad() }, maxZoom: 18.5,
+  attributionControl: false, dragRotate: false, pitchWithRotate: false, renderWorldCopies: false });
+map.touchZoomRotate.disableRotation();
+// panning stops a little beyond the city, and never inside the first view: on a tall phone screen that view is taller than
+// the city with its margin, and a limit set first made the map zoom in past the fit, half the city behind the card
+const vb = map.getBounds();
+map.setMaxBounds([[Math.min(w - pw, vb.getWest()), Math.min(s - ph, vb.getSouth())], [Math.max(e + pw, vb.getEast()), Math.max(n + ph, vb.getNorth())]]);
+map.setMinZoom(Math.max(0, map.getZoom() - 1));
+map.addControl(new maplibregl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-right');
+map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+// the credits stay closed until asked for: MapLibre opens its compact credits across the screen when they first
+// arrive and closes them at the first move, which moved the page as it loaded (Lighthouse, phone); the first opening it
+// makes itself is undone before the next paint, and the "i" button still opens them
+const attribEl = document.querySelector('.maplibregl-ctrl-attrib');
+if (attribEl) {
+  const shut = () => { if (attribEl.classList.contains('maplibregl-compact-show')) { attribEl.classList.remove('maplibregl-compact-show'); attribEl.removeAttribute('open'); mo.disconnect(); } };
+  const mo = new MutationObserver(shut); mo.observe(attribEl, { attributes: true, attributeFilter: ['class'] }); shut();
+}
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+map.on('styleimagemissing', ev => {
+  if (ev.id !== 'hatch') return;
+  const z = 8, c = document.createElement('canvas'); c.width = c.height = z; const g = c.getContext('2d');
+  g.fillStyle = 'rgba(245,245,243,0.85)'; g.fillRect(0, 0, z, z); g.strokeStyle = tok('--grey'); g.lineWidth = 1.2;
+  g.beginPath(); g.moveTo(0, z); g.lineTo(z, 0); g.moveTo(-z / 2, z / 2); g.lineTo(z / 2, -z / 2); g.moveTo(z / 2, z * 1.5); g.lineTo(z * 1.5, z / 2); g.stroke();
+  map.addImage('hatch', g.getImageData(0, 0, z, z));
+});
+
+// hour of day
+const slider = document.getElementById('hour'); slider.max = NH - 1; slider.value = hi;
+document.getElementById('ticks').innerHTML = D.ticks.map(t => `<span>${t}</span>`).join('');
+const bars = document.getElementById('bars');
+function drawBars() {
+  const dpr = devicePixelRatio || 1, W = bars.clientWidth, H = bars.clientHeight; bars.width = W * dpr; bars.height = H * dpr;
+  const g = bars.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
+  if (mode === 'day') {
+    // one bar: the view's share in each class of hours at 38 °C or more, as the key
+    let x = 0; const y = 14, bh = 24;
+    g.font = `600 12px ${tok('--font')}`; g.textBaseline = 'middle';
+    DST()[view].forEach((f, c) => {
+      const w = f * W; g.fillStyle = DCOLS[c]; g.fillRect(x, y, Math.max(0, w - 2), bh);
+      if (w > 34) { g.fillStyle = c >= 2 ? '#ffffff' : tok('--ink'); g.fillText(`${Math.round(f * 100)}%`, x + 6, y + bh / 2); }
+      x += w;
+    });
+    g.fillStyle = tok('--muted'); g.font = `400 11.5px ${tok('--font')}`; g.textBaseline = 'alphabetic';
+    g.fillText(view === 'stops' ? 'Share of stops by hours at 38 °C or more' : view === 'paths' ? 'Share of path length by hours at 38 °C or more' : 'Share of open ground by hours at 38 °C or more', 0, 9);
+    return;
+  }
+  const bw = W / NH;
+  ST()[view].forEach((sh, k) => {
+    let y = H - 1;
+    sh.forEach((f, c) => { const bh = f * (H - 4); g.fillStyle = COLS[c]; g.globalAlpha = mode === 'day' || k === hi ? 1 : 0.5; g.fillRect(k * bw + 1.5, y - bh, bw - 3, bh); y -= bh; });
+  });
+  g.globalAlpha = 1; if (mode === 'hour') { g.strokeStyle = tok('--ink'); g.lineWidth = 1.5; g.strokeRect(hi * bw + 0.75, 0.75, bw - 1.5, H - 1.5); }
+}
+function render() {
+  const H = D.hours[hi];
+  document.getElementById('h1').innerHTML = scen ? SCS[scen].headline : D.headline;
+  document.getElementById('deck').textContent = scen ? SCS[scen].deck : D.deck;
+  document.getElementById('m-day').setAttribute('aria-pressed', mode === 'day');
+  document.getElementById('m-hour').setAttribute('aria-pressed', mode === 'hour');
+  document.getElementById('m-hour').textContent = H.label;
+  slider.classList.toggle('idle', mode === 'day');
+  document.getElementById('air').textContent = mode === 'day' ? `Air peaked at ${D.day.peak_ta.toFixed(0)} °C` : `Air ${H.ta.toFixed(0)} °C, ${H.rh}% humidity`;
+  VIEWS.forEach(v => {
+    const share = mode === 'day' ? 1 - DST()[v][0] : ST()[v][hi].slice(D.hot).reduce((a, b) => a + b, 0);
+    document.getElementById('n-' + v).textContent = v === 'stops' ? Math.round(share * D.n_stops).toLocaleString('en-GB') : `${Math.round(share * 100)}%`;
+    document.getElementById('s-' + v).textContent = mode === 'day' ? D.view_small_day[v] : D.view_small[v];
+  });
+  if (ready) { showGround(); prefetch(); map.setPaintProperty('paths', 'line-color', colour()); map.setPaintProperty('stops', 'circle-color', colour()); }
+  drawKey(); drawBars(); if (pop) pop.refresh();
+}
+function setHour(k) { hi = k; mode = 'hour'; slider.value = k; render(); }
+function setMode(m) { mode = m; render(); }
+function showTrees() {
+  map.setLayoutProperty('trees', 'visibility', scen ? 'visible' : 'none');
+  if (SITE) { map.setFilter('trees', ['==', ['get', 's'], scen]); return; }
+  map.getSource('trees').setData({ type: 'FeatureCollection', features: (scen ? SCS[scen].trees : []).map(c => ({ type: 'Feature', geometry: { type: 'Point', coordinates: c }, properties: {} })) });
+  map.setLayoutProperty('trees', 'visibility', scen ? 'visible' : 'none');
+}
+function setScen(name) {
+  scen = name;
+  document.querySelectorAll('#scbtns button').forEach(b => b.setAttribute('aria-pressed', b.dataset.s === name));
+  const note = document.getElementById('scnote'); note.hidden = !name; note.textContent = name ? SCS[name].note : '';
+  if (ready) showTrees();
+  if (name && SCS[name].view && SCS[name].view !== view) setView(SCS[name].view);   // the stop trees show on the stops
+  render();
+}
+if (Object.keys(SCS).length) {
+  const box = document.getElementById('scbtns');
+  if (box.children.length === 1)                      // build.py writes the buttons into the page; else here
+    for (const [nm, S] of Object.entries(SCS)) box.insertAdjacentHTML('beforeend', `<button type="button" data-s="${nm}" aria-pressed="false">${S.label}</button>`);
+  document.getElementById('scen').hidden = false;
+  box.querySelectorAll('button').forEach(b => b.onclick = () => setScen(b.dataset.s));
+}
+function setView(v) {
+  view = v;
+  document.querySelectorAll('.view').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === v));
+  if (ready) {
+    if (!SITE) PIECES.forEach(p => map.setPaintProperty('ground' + p.id, 'raster-opacity', v === 'ground' ? 1 : 0));
+    showGround();
+    map.setPaintProperty('paths', 'line-opacity', v === 'paths' ? 1 : 0);
+    map.setPaintProperty('paths-case', 'line-opacity', v === 'paths' ? 1 : 0);
+    map.setPaintProperty('stops', 'circle-opacity', v === 'stops' ? 1 : 0);
+    map.setPaintProperty('stops', 'circle-stroke-opacity', v === 'stops' ? 1 : 0);
+  }
+  if (pop) pop.remove();
+  drawBars(); prefetch();
+}
+slider.oninput = () => setHour(+slider.value);
+document.getElementById('m-day').onclick = () => setMode('day');
+document.getElementById('m-hour').onclick = () => setMode('hour');
+bars.onclick = ev => setHour(Math.min(NH - 1, Math.floor(ev.offsetX / bars.clientWidth * NH)));
+document.querySelectorAll('.view').forEach(b => b.onclick = () => setView(b.dataset.v));
+addEventListener('keydown', ev => {
+  if (ev.target.closest && ev.target.closest('input')) return;
+  if (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft') setHour(Math.max(0, Math.min(NH - 1, hi + (ev.key === 'ArrowRight' ? 1 : -1))));
+  if (ev.key === 'd') setMode('day');
+  if (['1', '2', '3'].includes(ev.key)) setView(VIEWS[+ev.key - 1]);
+});
+addEventListener('resize', drawBars);
+// the hours either side of the one shown, fetched ahead so the slider steps without a wait (the city's images are
+// too many to fetch all at once)
+const fetched = new Set();
+function prefetch() {
+  if (SITE || mode === 'day' || view !== 'ground') return;
+  [hi - 1, hi + 1].filter(k => k >= 0 && k < NH).forEach(k => PIECES.forEach(p => {
+    const u = groundUrl(p.id, k); if (!fetched.has(u)) { fetched.add(u); const im = new Image(); im.src = u; }
+  }));
+}
+
+// a place's day: one cell an hour, like a row of a timetable
+const note = vals => (mode === 'hour' ? D.now_fmt.replace('{v}', vals[hi]) + ' ' : '') + D.count_fmt.replace('{n}', vals.filter(v => v >= HOT).length).replace('{N}', NH);
+function timetable(vals, title, sub) {
+  const cells = vals.map((v, k) => `<i style="background:${COLS[classOf(v)]}" class="${mode === 'hour' && k === hi ? 'on' : ''}" title="${D.hours[k].label}: ${v}${D.unit}"></i>`).join('');
+  const lab = D.hours.map((H, k) => `<span>${k % 3 === 0 ? H.short : ''}</span>`).join('');
+  return `<div class="pop"><h3>${title}</h3><p>${sub}</p><div class="tt" style="--n:${NH}">${cells}${lab}</div><p class="sum">${note(vals)}</p></div>`;
+}
+const notModelled = t => `<div class="pop"><h3>${t}</h3><p class="sum">Built since the lidar survey, not modelled.</p></div>`;
+function openPop(lngLat, html) {
+  if (pop) pop.remove();
+  pop = new maplibregl.Popup({ closeButton: true, maxWidth: '320px', focusAfterOpen: false }).setLngLat(lngLat).setHTML(html()).addTo(map);
+  pop.refresh = () => pop.setHTML(html()); pop.on('close', () => { pop = null; });
+}
+// a clicked feature's day: the site's from the tile's own properties, the artifact's from the JSON by index
+const valsOf = (f, kind) => SITE ? un(f.properties[scen && f.properties['v_' + scen] ? 'v_' + scen : 'v'])
+  : (kind === 'stops' ? stopVals : pathVals)(f.properties.i);
+map.on('click', 'stops', ev => {
+  if (view !== 'stops') return;
+  const f = ev.features[0], st = SITE ? { ...f.properties, x: f.geometry.coordinates[0], y: f.geometry.coordinates[1] } : D.stops[f.properties.i];
+  openPop([st.x, st.y], () => st.g === 2 ? `<div class="pop"><h3>${st.n}</h3><p>${st.m}</p><p class="sum">Under a canopy or overhang, so in shade all day. The lidar cannot see under it, so it is not modelled.</p></div>`
+    : st.g ? notModelled(st.n) : timetable(valsOf(f, 'stops'), st.n, st.m + (st.sh ? ' · has a shelter' : '')));
+});
+map.on('click', 'paths', ev => {
+  if (view !== 'paths') return;
+  const f = ev.features[0], g = SITE ? f.properties.g : D.paths[f.properties.i][2];
+  openPop(ev.lngLat, () => g === 2 ? `<div class="pop"><h3>Underpass or covered path</h3><p class="sum">Under a bridge or roof, so in shade all day. The lidar cannot see under it, so it is not modelled.</p></div>`
+    : g ? notModelled('Footpath') : timetable(valsOf(f, 'paths'), 'This stretch of path', 'Up to 25 m of path'));
+});
+['stops', 'paths'].forEach(l => {
+  map.on('mouseenter', l, () => { if (view === l) map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', l, () => { map.getCanvas().style.cursor = ''; });
+});
+// the controls work before the map has loaded (the card is drawn first); the map takes their state when it has
+render();
+map.on('load', () => {
+  ready = true; setView(view); showTrees(); render();
+  document.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');   // credits fold behind the (i)
+});
+})().catch(err => { document.getElementById('h1').textContent = 'The map could not load. Reload the page to try again.'; console.error(err); });
+</script>
