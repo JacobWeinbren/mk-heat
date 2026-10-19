@@ -36,6 +36,10 @@ h1 em { font-style: normal; color: var(--heat); }
 .view b { font-weight: 600; font-size: 13px; line-height: 1.15; }
 .view span { font: 600 21px/1 var(--font); font-variant-numeric: tabular-nums; }
 .view small { font-size: 12px; color: var(--muted); line-height: 1.2; }
+.view small:empty { display: none; }
+.vh { margin: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.vhrow { display: flex; align-items: center; justify-content: space-between; gap: 4px 8px; flex-wrap: wrap; margin-bottom: -4px; }
+.mode.where button { font-size: 12px; padding: 5px 8px; }
 .day { display: grid; gap: 6px; }
 .dayhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .mode { display: inline-grid; grid-auto-flow: column; border: 1px solid var(--rule); border-radius: 2px; }
@@ -118,9 +122,10 @@ h1 em { font-style: normal; color: var(--heat); }
   <h1 id="h1">Loading the hottest day of the summer…</h1>
   <p class="deck" id="deck"></p>
   <div class="links"><button class="x" id="more" type="button">How this was made</button><a class="x" href="https://github.com/JacobWeinbren/mk-heat" target="_blank" rel="noopener">The code</a></div>
+  <div class="vhrow"><p class="vh" id="vh"></p><div class="mode where" role="group" aria-label="Where" id="where" hidden><button type="button" data-a="urban" aria-pressed="true">Urban area</button><button type="button" data-a="" aria-pressed="false">Whole borough</button></div></div>
   <div class="views" role="group" aria-label="What to show">
-    <button class="view" type="button" data-v="ground" aria-pressed="false"><b>Open ground</b><span id="n-ground">–</span><small id="s-ground"></small></button>
-    <button class="view" type="button" data-v="paths" aria-pressed="true"><b>Footpaths</b><span id="n-paths">–</span><small id="s-paths"></small></button>
+    <button class="view" type="button" data-v="ground" aria-pressed="true"><b>Open ground</b><span id="n-ground">–</span><small id="s-ground"></small></button>
+    <button class="view" type="button" data-v="paths" aria-pressed="false"><b>Footpaths</b><span id="n-paths">–</span><small id="s-paths"></small></button>
     <button class="view" type="button" data-v="stops" aria-pressed="false"><b>Bus stops</b><span id="n-stops">–</span><small id="s-stops"></small></button>
   </div>
   <div class="scen" id="scen" hidden>
@@ -180,17 +185,24 @@ const [D, basemap, GLYPHS] = await Promise.all([fetch(u(SITE ? 'meta.json' : 'da
     const b = atob(t.trim()), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a.buffer; }),
   SITE ? null : fetch(u('glyphs.json')).then(r => r.json())]);
 const COLS = D.colors.map(c => c.startsWith('--') ? tok(c) : c), NH = D.hours.length, VIEWS = ['ground', 'paths', 'stops'];
-let view = 'paths', hi = D.start, mode = 'day', pop = null, ready = false;
+// the page opens on open ground (Jacob, 19 Oct 2026: "open the heat map, by default, on "open ground" not "footpaths". it
+// is visually clearer")
+let view = 'ground', hi = D.start, mode = 'day', pop = null, ready = false;
 // the alternative Thursdays (package.py --scenario NAME, one entry each): their own values, figures and images
 const SCS = D.scenarios || {}; let scen = '';
 const SC = () => scen ? SCS[scen] : null;
-const ST = () => scen ? SCS[scen].stats : D.stats, DST = () => scen ? SCS[scen].day_stats : D.day.stats;
+// where the figures are of (Jacob, 19 Oct 2026: "split the figures between the urban core and the greater extent"):
+// the urban part, where most people live, first; the map shows the whole area either way
+let where = D.urban ? 'urban' : '';
+const FIG = () => { const F = scen ? SCS[scen] : D; return where && F.urban ? F.urban : F; };
+const ST = () => FIG().stats, DST = () => FIG().day_stats || D.day.stats;
+const NSTOPS = () => where ? D.urban.n_stops : D.n_stops;
 // a scenario holds only the pieces and stops it changes ({index: values}); the first pass's values stand elsewhere
 const pathVals = i => un((scen && SCS[scen].paths[i]) || D.paths[i][1]), stopVals = i => un((scen && SCS[scen].stops[i]) || D.stops[i].v);
 const DCOLS = D.day.colors.map(tok), HOT = D.classes[D.hot].lo;
 
 document.getElementById('when').textContent = `${D.area}, Thursday 13 August 2026`;
-document.getElementById('h1').innerHTML = D.headline;
+document.getElementById('h1').innerHTML = FIG().headline;
 document.getElementById('deck').textContent = D.deck;
 document.getElementById('src').innerHTML = D.sources;
 document.getElementById('keyh').textContent = D.key;
@@ -358,8 +370,12 @@ const style = {
   glyphs: 'glyphs://{fontstack}/{range}',
   sources: {
     b: { type: 'vector', url: SITE ? tiles('basemap') : 'pmtiles://mk', attribution: D.credits },
+    ...(D.urban ? { urban: { type: 'geojson', data: D.urban.outline } } : {}),
     ...(SITE ? {
       f: { type: 'vector', url: tiles('features') },
+      // the new trees in their own archive, from the zoom they are drawn at (site.py), named tile by tile so nothing of it
+      // is read until a plan's trees show
+      ...(TS.trees ? { t: { type: 'vector', tiles: [tiles('trees') + '/{z}/{x}/{y}'], minzoom: TS._trees.minzoom, maxzoom: TS._trees.maxzoom } } : {}),
       ...Object.fromEntries(GROUNDS.map(g => ['g:' + g, rasterOf('ground/' + g)])),
       bl: rasterOf('ground/bld'),
     } : {
@@ -401,12 +417,15 @@ const style = {
     { id: 'grey-line', type: 'line', ...src('grey'), paint: { 'line-color': tok('--grey'), 'line-width': 0.8 } },
     // the paths' white edge, also what a click on a path hits
     { id: 'paths-case', type: 'line', ...src('paths'), layout: LINE,
-      paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 14, 5.5, 17, 10], 'line-opacity': 1, 'line-opacity-transition': NOW } },
+      paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 14, 5.5, 17, 10], 'line-opacity': view === 'paths' ? 1 : 0, 'line-opacity-transition': NOW } },
     ...KEYS.map(k => ({ id: 'paths:' + k, type: 'line', ...src('paths'), layout: LINE,
       paint: { 'line-color': colourOf(k), 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.6, 14, 3.2, 17, 7], 'line-opacity': 0, 'line-opacity-transition': NOW } })),
+    // the urban part's edge while its figures show, over the footpaths (under them it was lost among them)
+    ...(D.urban ? [{ id: 'urban', type: 'line', source: 'urban', layout: { visibility: where ? 'visible' : 'none' },
+                     paint: { 'line-color': tok('--ink'), 'line-width': 1.6, 'line-opacity': 0.85, 'line-dasharray': [3, 2] } }] : []),
     // the scenario's new trees, from zoom 15 only and half see-through, so the colours beneath show what they change
     // (Jacob, 18 Oct 2026: "the trees cover the map so it is hard to see their effect"); true size from zoom 17
-    { id: 'trees', type: 'circle', ...src('trees'), minzoom: 15, layout: { visibility: 'none' },
+    { id: 'trees', type: 'circle', ...(SITE && TS.trees ? { source: 't', 'source-layer': 'trees' } : src('trees')), minzoom: 15, layout: { visibility: 'none' },
       paint: { 'circle-color': '#2f5a2b', 'circle-opacity': 0.55, 'circle-radius': ['interpolate', ['exponential', 2], ['zoom'], 15, 1.5, 17, 3.4, 18, 6.8] } },
     ...KEYS.map(k => ({ id: 'stops:' + k, type: 'circle', ...src('stops'),
       paint: { 'circle-color': colourOf(k), 'circle-radius': STOP_R, 'circle-opacity': 0, 'circle-opacity-transition': NOW } })),
@@ -481,7 +500,7 @@ function drawBars() {
       x += w;
     });
     g.fillStyle = tok('--muted'); g.font = `400 11.5px ${tok('--font')}`; g.textBaseline = 'alphabetic';
-    g.fillText(view === 'stops' ? 'Share of stops by hours at 38 °C or more' : view === 'paths' ? 'Share of path length by hours at 38 °C or more' : 'Share of open ground by hours at 38 °C or more', 0, 9);
+    g.fillText(`${view === 'stops' ? 'Bus stops' : view === 'paths' ? 'Footpaths' : 'Open ground'} by hours at 38 °C or more`, 0, 9);
     return;
   }
   const bw = W / NH;
@@ -493,17 +512,18 @@ function drawBars() {
 }
 function render() {
   const H = D.hours[hi];
-  document.getElementById('h1').innerHTML = scen ? SCS[scen].headline : D.headline;
-  document.getElementById('deck').textContent = scen ? SCS[scen].deck : D.deck;
+  document.getElementById('h1').innerHTML = FIG().headline;
+  document.getElementById('deck').textContent = (scen ? FIG() : D).deck;
   document.getElementById('m-day').setAttribute('aria-pressed', mode === 'day');
   document.getElementById('m-hour').setAttribute('aria-pressed', mode === 'hour');
   document.getElementById('m-hour').textContent = H.label;
   slider.classList.toggle('idle', mode === 'day');
   document.getElementById('air').textContent = mode === 'day' ? `Air peaked at ${D.day.peak_ta.toFixed(0)} °C` : `Air ${H.ta.toFixed(0)} °C, ${H.rh}% humidity`;
+  if (D.views_head) document.getElementById('vh').textContent = mode === 'day' ? D.views_head.day : D.views_head.hour.replace('{h}', H.label);
   VIEWS.forEach(v => {
     const share = mode === 'day' ? 1 - DST()[v][0] : ST()[v][hi].slice(D.hot).reduce((a, b) => a + b, 0);
-    document.getElementById('n-' + v).textContent = v === 'stops' ? Math.round(share * D.n_stops).toLocaleString('en-GB') : `${Math.round(share * 100)}%`;
-    document.getElementById('s-' + v).textContent = mode === 'day' ? D.view_small_day[v] : D.view_small[v];
+    document.getElementById('n-' + v).textContent = v === 'stops' ? Math.round(share * NSTOPS()).toLocaleString('en-GB') : `${Math.round(share * 100)}%`;
+    document.getElementById('s-' + v).textContent = (where ? D.urban.view_small : mode === 'day' ? D.view_small_day : D.view_small)[v];
   });
   if (ready) { showGround(); prefetch(); showLines(); }
   drawKey(); drawBars(); if (pop) pop.refresh();
@@ -530,6 +550,16 @@ if (Object.keys(SCS).length) {
     for (const [nm, S] of Object.entries(SCS)) box.insertAdjacentHTML('beforeend', `<button type="button" data-s="${nm}" aria-pressed="false">${S.label}</button>`);
   document.getElementById('scen').hidden = false;
   box.querySelectorAll('button').forEach(b => b.onclick = () => setScen(b.dataset.s));
+}
+function setWhere(a) {
+  where = a;
+  document.querySelectorAll('#where button').forEach(b => b.setAttribute('aria-pressed', b.dataset.a === a));
+  if (ready) map.setLayoutProperty('urban', 'visibility', a ? 'visible' : 'none');
+  render();
+}
+if (D.urban) {
+  document.getElementById('where').hidden = false;
+  document.querySelectorAll('#where button').forEach(b => b.onclick = () => setWhere(b.dataset.a));
 }
 function setView(v) {
   view = v;

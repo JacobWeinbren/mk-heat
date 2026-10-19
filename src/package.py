@@ -15,7 +15,7 @@ Metric: UTCI (degC) where utci.py has run for every tile, else the sunlit share 
   tagged indoor (the shopping centre's malls) are left out. A way on a bridge takes the deck's own cells (it is on top of them). A way in a tunnel or
   underpass, below ground level or covered (but not indoors) is drawn as "under cover" with no modelled value and left
   out of the figures (the lidar cannot see under a deck or roof).
-- Bus stops: NaPTAN on-street stops (BCT) in use today, each the mean over the 3 x 3 m around the stop, off building
+- Bus stops: NaPTAN on-street stops (BCT) in use today, each the coolest of the 3 x 3 m around the stop each hour, off building
   cells. The time gap is handled as for footpaths (Jacob left it to me, 18 Oct 2026, after first asking to drop the
   81 stops created since the survey): a stop added since on a road that was already there is modelled, since the
   2021 surfaces still describe its surroundings; a stop in an area built since the survey is drawn grey.
@@ -24,6 +24,7 @@ Class limits are the UTCI assessment scale's (Broede et al. 2012; Jendritzky et 
 usage: <heat venv python> -I package.py <repo root> [area name, default "Milton Keynes"]
 """
 import csv, gzip, io, json, math, shutil, sys
+import shapely
 from pathlib import Path
 import numpy as np
 import rasterio
@@ -55,9 +56,12 @@ to_wgs = Transformer.from_crs(27700, 4326, always_xy=True).transform
 # city, whose outline left out the parks inside it (49 of central MK's 144 km of footpath; Jacob, 18 Oct 2026:
 # "footpaths feel incomplete in CMK"). It bounds the figures; footpaths and stops are kept wherever tiles were modelled.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from area import area as _area  # noqa: E402
+from area import area as _area, urban as _urban  # noqa: E402
 from shapely.geometry import Polygon as _P, MultiPolygon as _MP
 bua = _area(H); bua_p = prep(bua)
+# the figures twice: the whole area's and its urban part's (area.urban; Jacob, 19 Oct 2026: "maybe split the figures
+# between the urban core and the greater extent. because not many people live in the rural bits")
+urb = _urban(H); urb_p = prep(urb)
 
 # per-tile metric, hours, building and grey masks
 # per-tile files are read when used and not held open: the city's 138 tiles hold about 8 GB of hourly values as
@@ -143,6 +147,10 @@ inb = {}
 for t in tiles:
     cx0, cy0, cx1, cy1 = pool[t]["core"]
     inb[t] = rasterize([(bua, 1)], out_shape=(int(cy1 - cy0), int(cx1 - cx0)), transform=from_origin(cx0, cy1, 1, 1), fill=0, dtype="uint8").astype(bool)
+inu = {}
+for t in tiles:
+    cx0, cy0, cx1, cy1 = pool[t]["core"]
+    inu[t] = rasterize([(urb, 1)], out_shape=(int(cy1 - cy0), int(cx1 - cx0)), transform=from_origin(cx0, cy1, 1, 1), fill=0, dtype="uint8").astype(bool)
 
 # carriageways and railway land, left out of "open ground" (Jacob, 18 Oct 2026: "roads are unlikely to have people
 # walking on them"): OSM as on 17 Jan 2021; a road's width is its OSM width, else its lanes x 3.65 m (the UK standard
@@ -175,13 +183,32 @@ for t in tiles:
     road[t] = rasterize([(nogo_u, 1)], out_shape=(int(cy1 - cy0), int(cx1 - cx0)), transform=from_origin(cx0, cy1, 1, 1), fill=0, dtype="uint8").astype(bool)
 print(f"carriageway and railway land: {np.mean([road[t].mean() for t in tiles]):.1%} of the modelled tiles", flush=True)
 np.savez_compressed(H / "layers" / "road_mask.npz", **road)
+# water, left out of "open ground" as the roads are (Jacob, 18 Oct 2026: "obviously people don't walk in lakes, rivers,
+# streams, ponds"): OSM's water areas (water.py) and the cells the land cover makes water (most returns v1's Water)
+import water as _water  # noqa: E402
+import rasterio.windows  # noqa: E402
+_cores = [pool[t]["core"] for t in tiles]
+wat_u = _water.polygons(H, (min(c[0] for c in _cores), min(c[1] for c in _cores), max(c[2] for c in _cores), max(c[3] for c in _cores)))
+off = {}
+for t in tiles:
+    cx0, cy0, cx1, cy1 = pool[t]["core"]
+    w_ = (rasterize([(wat_u, 1)], out_shape=(int(cy1 - cy0), int(cx1 - cx0)), transform=from_origin(cx0, cy1, 1, 1), fill=0, dtype="uint8").astype(bool)
+          if not wat_u.is_empty else np.zeros((int(cy1 - cy0), int(cx1 - cx0)), bool))
+    lcf = H / "surfaces" / f"{t}_lc.tif"
+    if lcf.exists():
+        with rasterio.open(lcf) as r_:
+            w_ |= r_.read(1, window=rasterio.windows.from_bounds(cx0, cy0, cx1, cy1, r_.transform), boundless=True, fill_value=0) == 7
+    off[t] = road[t] | w_
+print(f"water: {np.mean([(off[t] & ~road[t]).mean() for t in tiles]):.1%} of the modelled tiles", flush=True)
 
 # open ground: stats over open, modelled cells in the BUA; images at 2 m
 nk = len(classes); stats = {"ground": np.zeros((len(hours), nk)), "paths": np.zeros((len(hours), nk)), "stops": np.zeros((len(hours), nk))}
+ustats = {v: np.zeros_like(a) for v, a in stats.items()}           # the urban part's
 for t in tiles:
-    ok = inb[t] & (bld[t] == 0) & ~grey_m[t] & ~road[t]
+    ok = inb[t] & (bld[t] == 0) & ~grey_m[t] & ~off[t]; ok_u = ok & inu[t]
     for k in range(len(hours)):
         stats["ground"][k] += np.bincount(klass(metric[t][k][ok]), minlength=nk)
+        ustats["ground"][k] += np.bincount(klass(metric[t][k][ok_u]), minlength=nk)
 X0 = min(pool[t]["core"][0] for t in tiles); Y0 = min(pool[t]["core"][1] for t in tiles)
 X1 = max(pool[t]["core"][2] for t in tiles); Y1 = max(pool[t]["core"][3] for t in tiles)
 # the images' cell: 2 m (one 1 m cell of each 2 x 2 block) where the area fits one 4,096 px image (central MK), else 3 m
@@ -236,7 +263,7 @@ def grid_of(t):
 cls_h = np.full((len(hours), Hh, W), 255, np.uint8)       # every hour's grid, filled one tile at a time
 for t in tiles:
     S2, (r0, c0) = grid_of(t)
-    keep = ((bld[t] == 0) & ~grey_m[t] & ~road[t])[S2]; b = ((bld[t] == 1) & ~grey_m[t])[S2]
+    keep = ((bld[t] == 0) & ~grey_m[t] & ~off[t] & inb[t])[S2]; b = ((bld[t] == 1) & ~grey_m[t] & inb[t])[S2]
     for k in range(len(hours)):
         v = metric[t][k][S2]
         c = np.where(keep & np.isfinite(v), klass(np.nan_to_num(v)), 255).astype(np.uint8)
@@ -255,24 +282,27 @@ cl = np.full((Hh, W), 255, np.uint8)
 for t in tiles:
     S2, (r0, c0) = grid_of(t)
     n = (metric[t] >= hot_lo).sum(axis=0)[S2]
-    c = np.where(((bld[t] == 0) & ~grey_m[t] & ~road[t])[S2], np.searchsorted(day_lo[1:], n, side="right"), 255).astype(np.uint8)
-    c[((bld[t] == 1) & ~grey_m[t])[S2]] = len(day_hex)
+    c = np.where(((bld[t] == 0) & ~grey_m[t] & ~off[t] & inb[t])[S2], np.searchsorted(day_lo[1:], n, side="right"), 255).astype(np.uint8)
+    c[((bld[t] == 1) & ~grey_m[t] & inb[t])[S2]] = len(day_hex)
     cl[r0:r0 + c.shape[0], c0:c0 + c.shape[1]] = c
 save(cl, f"day{SFX}", [int(h_[i:i + 2], 16) for h_ in day_hex + [BLD_HEX] for i in (1, 3, 5)])
 # the buildings as modelled (2021 lidar), drawn in every view: complete where OSM's outlines are not, and where the heat is
 cl = np.full((Hh, W), 255, np.uint8)
 for t in tiles:
     S2, (r0, c0) = grid_of(t)
-    c = np.where(((bld[t] == 1) & ~grey_m[t])[S2], 0, 255).astype(np.uint8)
+    c = np.where(((bld[t] == 1) & ~grey_m[t] & inb[t])[S2], 0, 255).astype(np.uint8)
     cl[r0:r0 + c.shape[0], c0:c0 + c.shape[1]] = c
 if not SCEN:                                       # the buildings are the same in a scenario
     save(cl, "bld", [int(BLD_HEX[i:i + 2], 16) for i in (1, 3, 5)])
 del cl
 dstats = {"ground": np.zeros(len(day_lo)), "paths": np.zeros(len(day_lo)), "stops": np.zeros(len(day_lo))}
+udstats = {v: np.zeros_like(a) for v, a in dstats.items()}
 dclass = lambda nh: int(np.searchsorted(day_lo[1:], nh, side="right"))
 for t in tiles:
-    ok = inb[t] & (bld[t] == 0) & ~grey_m[t] & ~road[t]
-    dstats["ground"] += np.bincount(np.searchsorted(day_lo[1:], (metric[t] >= hot_lo).sum(axis=0)[ok], side="right"), minlength=len(day_lo))
+    ok = inb[t] & (bld[t] == 0) & ~grey_m[t] & ~off[t]
+    nh_ = np.searchsorted(day_lo[1:], (metric[t] >= hot_lo).sum(axis=0), side="right")
+    dstats["ground"] += np.bincount(nh_[ok], minlength=len(day_lo))
+    udstats["ground"] += np.bincount(nh_[ok & inu[t]], minlength=len(day_lo))
 print("ground images", dw, "x", dh, flush=True)
 
 # footpaths, as on 17 Jan 2021
@@ -304,7 +334,7 @@ for w in osm["elements"]:
         cuts = np.arange(0, d[-1] + 25, 25.0); cuts[-1] = d[-1]
         for a, b in zip(cuts[:-1], cuts[1:]):
             m = (a + b) / 2
-            if b - a >= 1 and inside_tiles(np.interp(m, d, ex), np.interp(m, d, ny)):
+            if b - a >= 1 and inside_tiles(np.interp(m, d, ex), np.interp(m, d, ny)) and bua_p.contains(Point(np.interp(m, d, ex), np.interp(m, d, ny))):
                 paths.append([piece(a, b, d, ex, ny), [], 2]); n_under += b - a
         continue
     # sample every metre; the way is drawn and modelled only where it is out of doors in 2021 (off building cells, or on
@@ -320,7 +350,7 @@ for w in osm["elements"]:
         for q0, q1 in zip(ce[::2], ce[1::2]):
             for c0 in range(q0, q1 - 1, 25):
                 c1 = min(c0 + 25, q1 - 1)
-                if c1 > c0:
+                if c1 > c0 and bua_p.contains(Point(px[(c0 + c1) // 2], py[(c0 + c1) // 2])):
                     paths.append([piece(s_[c0], s_[c1], d, ex, ny), [], 2]); n_under += s_[c1] - s_[c0]
     edges = np.flatnonzero(np.diff(np.r_[0, ok.astype(int), 0]))
     for r0, r1 in zip(edges[::2], edges[1::2]):             # open runs [r0, r1)
@@ -336,16 +366,21 @@ for w in osm["elements"]:
                 continue
             grey = int(gr[c0:c1 + 1].mean() > 0.5)
             in_city = bua_p.contains(Point(px[(c0 + c1) // 2], py[(c0 + c1) // 2]))     # counted in the figures
+            if not in_city:
+                continue                             # drawn only where counted (Jacob, 18 Oct 2026: a stop and paths
+                                                     # outside the area showed on the map without counting)
             vals = [int(round(x)) for x in val]
             paths.append([piece(a, b, d, ex, ny), vals, grey]); plen.append(b - a)
             if not grey and in_city:
-                for k in range(len(hours)):
-                    stats["paths"][k, klass(val[k])] += b - a
-                dstats["paths"][dclass(int((np.array(vals) >= hot_lo).sum()))] += b - a
+                in_urb = urb_p.contains(Point(px[(c0 + c1) // 2], py[(c0 + c1) // 2]))
+                for S_, D_ in ((stats, dstats), *(((ustats, udstats),) if in_urb else ())):
+                    for k in range(len(hours)):
+                        S_["paths"][k, klass(val[k])] += b - a
+                    D_["paths"][dclass(int((np.array(vals) >= hot_lo).sum()))] += b - a
 print(len(paths), "path pieces,", f"{sum(plen) / 1000:.0f} km modelled, {n_under / 1000:.1f} km under cover", flush=True)
 
 # bus stops
-stops = []
+stops = []; URB_STOPS = set()                    # the counted stops in the urban part, by NaPTAN code
 SHELTERED = set(json.load(open(H / "layers" / "shelters.json"))["atco"]) if (H / "layers" / "shelters.json").exists() else set()
 if SCEN and (H / "layers" / f"{SCEN}.json").exists():           # the scenario's own new shelters (shelters.py add)
     SHELTERED |= {s_["atco"] for s_ in json.load(open(H / "layers" / f"{SCEN}.json")).get("new_shelters", [])}
@@ -357,6 +392,8 @@ for row in csv.DictReader(open(H / "naptan" / "naptan_049.csv")):
     except ValueError:
         continue
     in_city = bua_p.contains(Point(e, n))
+    if not in_city:
+        continue                                   # drawn only where counted, as the footpaths
     xs = e + np.repeat([-1, 0, 1], 3); ys = n + np.tile([-1, 0, 1], 3)
     v, bb, gr = sample(xs, ys)
     if (bb < 0).all():
@@ -370,11 +407,9 @@ for row in csv.DictReader(open(H / "naptan" / "naptan_049.csv")):
                       "m": ", ".join(x for x in [row["Indicator"], row["LocalityName"]] if x), "v": [], "g": 2})
         continue
     lon, lat = to_wgs(e, n)
-    # a stop: the mean of its 3 x 3 m; a stop with a shelter: its coolest cell each hour, where people wait under the
-    # roof (solweig shades the cells beyond a canopy cell from the sun, not the cell itself, so a roof the size of the
-    # waiting area leaves its sunward edge lit)
-    val = ((np.nanmin(v[keep], axis=0) if row["ATCOCode"] in SHELTERED else np.nanmean(v[keep], axis=0))
-           if keep.any() else np.full(len(hours), np.nan))
+    # a stop: the coolest of its 3 x 3 m each hour, where people waiting stand (Jacob, 18 Oct 2026: "yes judge every stop
+    # by its coolest spot"); until then only a sheltered stop was judged so, the others by the mean of the nine cells
+    val = np.nanmin(v[keep], axis=0) if keep.any() else np.full(len(hours), np.nan)
     vals = [] if grey or not np.isfinite(val).all() else [int(round(x)) for x in val]
     if not vals:
         grey = 1
@@ -382,10 +417,15 @@ for row in csv.DictReader(open(H / "naptan" / "naptan_049.csv")):
     stops.append({"x": round(lon, 6), "y": round(lat, 6), "n": row["CommonName"], "m": sub, "v": vals, "g": grey,
                   **({"sh": 1} if row["ATCOCode"] in SHELTERED else {})})    # a shelter OSM records (shelters.py)
     if not grey and in_city:
-        for k in range(len(hours)):
-            stats["stops"][k, klass(val[k])] += 1
-        dstats["stops"][dclass(int((np.array(vals) >= hot_lo).sum()))] += 1
+        in_urb = urb_p.contains(Point(e, n))
+        if in_urb:
+            URB_STOPS.add(row["ATCOCode"])
+        for S_, D_ in ((stats, dstats), *(((ustats, udstats),) if in_urb else ())):
+            for k in range(len(hours)):
+                S_["stops"][k, klass(val[k])] += 1
+            D_["stops"][dclass(int((np.array(vals) >= hot_lo).sum()))] += 1
 n_stops = int(round(stats["stops"][0].sum()))     # the stops counted in the figures
+n_stops_u = int(round(ustats["stops"][0].sum()))
 print(len(stops), "stops,", n_stops, "modelled", flush=True)
 
 # grey areas clipped to the BUA
@@ -494,6 +534,8 @@ print(len(extra), "road, park and landmark labels", flush=True)
 
 # text
 frac = {v: stats[v] / np.maximum(stats[v].sum(axis=1, keepdims=True), 1) for v in stats}
+ufrac = {v: ustats[v] / np.maximum(ustats[v].sum(axis=1, keepdims=True), 1) for v in ustats}
+day_share = lambda ds: {v: (ds[v] / max(ds[v].sum(), 1)).round(4).tolist() for v in ds}
 hotshare = {v: frac[v][:, hot:].sum(axis=1) for v in frac}
 peak = int(np.argmax(hotshare["paths"]))
 hp = hours[peak]
@@ -502,26 +544,31 @@ if mode == "utci":
     head = None   # set below, from the shade figures
     sun_v, shade_v = [], []
     for t in tiles:
-        ok = inb[t] & (bld[t] == 0) & ~grey_m[t] & ~road[t]; lit = shade[t]["sun"][sh_hours.index(hp)] / 200
+        ok = inb[t] & (bld[t] == 0) & ~grey_m[t] & ~off[t]; lit = shade[t]["sun"][sh_hours.index(hp)] / 200
         sun_v.append(metric[t][peak][ok & (lit >= 0.8)]); shade_v.append(metric[t][peak][ok & (lit < 0.2)])
     ms, mh = float(np.median(np.concatenate(sun_v))), float(np.median(np.concatenate(shade_v)))
     # the headline says what the page opens on (footpaths over the whole day); the peak hour's sun and shade below it
     path_day = 1 - dstats["paths"][0] / max(dstats["paths"].sum(), 1)
+    upath_day = 1 - udstats["paths"][0] / max(udstats["paths"].sum(), 1)
     # said plainly (Jacob, 18 Oct 2026: "these key sentences, can you make them clearer, more actionable and direct"):
     # a UTCI of 38 °C or more is the scale's "very strong heat stress" (38 to 46; Bröde et al. 2012), named once and
     # explained under it; the shade figures say what changes it
-    head = f"On the hottest day of the summer, <em>{round(path_day * 100)}%</em> of {OF_AREA} footpaths reached very strong heat stress."
-    never = int(dstats["stops"][0]); most = max(int((np.array(st["v"]) >= hot_lo).sum()) for st in stops if not st["g"])
+    # about the people using the place, as far as the model can say: who walks where is not known, so a share of footpath
+    # (Jacob, 18 Oct 2026, suggesting "69% of Milton Keynes' pedestrians were exposed to very strong heat stress")
+    HEAD = "On the hottest day of the summer, walkers on <em>{}%</em> of {} footpaths faced very strong heat stress."
+    head, uhead = HEAD.format(round(path_day * 100), OF_AREA), HEAD.format(round(upath_day * 100), OF_AREA)
+    never, unever = int(dstats["stops"][0]), int(udstats["stops"][0]); most = max(int((np.array(st["v"]) >= hot_lo).sum()) for st in stops if not st["g"])
     deck = "That is a feels-like temperature of 38 °C or more, for at least an hour."      # the definition only (Jacob: "you can cut this extra text out")
     key, unit = "Feels like (UTCI), °C", "°C"
     now_fmt, count_fmt = "Feels like {v} °C now.", "{n} of {N} hours at 38 °C or more."
 else:
     head = f"From {ampm(hp)} to {ampm(hp + 1)}, <em>{round(hotshare['paths'][peak] * 100)}%</em> of the footpaths in {AREA} had no shade."
+    uhead = head                                  # the sunlit share is not split
     deck = "Sun and shade on the hottest day of the summer, from buildings and trees measured by lidar."
     key, unit = "Sun on the ground, at the middle of each hour", "%"
     now_fmt, count_fmt = "{v}% in sun now.", "In full sun for {n} of {N} hours."
 # a number never parts from its unit at a line end
-head, deck = (x.replace(" °C", "\u00a0°C").replace(" hours", "\u00a0hours") for x in (head, deck))
+head, uhead, deck = (x.replace(" °C", "\u00a0°C").replace(" hours", "\u00a0hours") for x in (head, uhead, deck))
 if SCEN:
     base = json.load(open(WEB / "data.json"))
     assert len(base["paths"]) == len(paths) and all(a[0] == b[0] and a[2] == b[2] for a, b in zip(base["paths"], paths)), \
@@ -537,46 +584,55 @@ if SCEN:
         # only what the scenario changes: {index: hourly values}; the page takes the first pass's values elsewhere
         "paths": {i: p_[1] for i, (p_, b_) in enumerate(zip(paths, base["paths"])) if p_[1] != b_[1]},
         "stops": {i: s_["v"] for i, (s_, b_) in enumerate(zip(stops, base["stops"])) if s_["v"] != b_["v"]},
-        "stats": {v: frac[v].round(4).tolist() for v in frac},
-        "day_stats": {v: (dstats[v] / max(dstats[v].sum(), 1)).round(4).tolist() for v in dstats},
-        "path_day": round(float(path_day), 4), "never": never, "most": most}
+        "stats": {v: frac[v].round(4).tolist() for v in frac}, "day_stats": day_share(dstats),
+        "path_day": round(float(path_day), 4), "never": never, "most": most,
+        "urban": {"stats": {v: ufrac[v].round(4).tolist() for v in ufrac}, "day_stats": day_share(udstats),
+                  "path_day": round(float(upath_day), 4), "never": unever}}
     # the headline and the line under it for the switch (Jacob, 18 Oct 2026: "the ... sentence doesn't update when I
-    # plant the trees"): the same figures as the page's, the scenario's against the first pass's
+    # plant the trees"): the same figures as the page's, the scenario's against the first pass's, for the whole area and
+    # for its urban part (its own stops, and the trees and shelters planted in it)
     hrs_of = lambda st, v: sum(sum(sh[hot:]) for sh in st[v])      # each hour's share at 38 or more, summed: hours each
     pct_b = round((1 - base["day"]["stats"]["paths"][0]) * 100); never_b = round(base["day"]["stats"]["stops"][0] * base["n_stops"])
+    BU = base["urban"]
     n_ = f"{len(new):,}"
+    _h = tj["tree"]["height"]
+    TREE_IS = (f"Each is {_h:g}\u00a0m tall, the median of the trees beside paths and stops now."
+               if tj.get("tree_rule") else f"Each is {_h:g}\u00a0m tall.")
+    sh_new = tj.get("new_shelters", [])
+    # each area's (stops counted, of them never at 38 as it was, never at 38 with the plan, % of footpath at 38 as it was,
+    # with the plan, new trees, new shelters); the whole area's text is the scenario's own, the urban part's under "urban"
+    AREAS = {"": (base["n_stops"], never_b, never, pct_b, round(path_day * 100), len(new), len(sh_new)),
+             "urban": (BU["n_stops"], round(BU["day_stats"]["stops"][0] * BU["n_stops"]), unever,
+                       round((1 - BU["day_stats"]["paths"][0]) * 100), round(upath_day * 100),
+                       sum(1 for c in new if urb_p.contains(Point(c["x"], c["y"]))), sum(1 for s_ in sh_new if s_["atco"] in URB_STOPS))}
+    ns = len(sh_new); sc_["shelters"] = ns
     if sc_["stops_only"]:
         # the trees for the bus stops alone (Jacob: "Wait with 100 trees you deal with the bus problem? Maybe we should just
         # focus on that then")
-        ns = len(tj.get("new_shelters", [])); what = f"{n_} trees" + (f" and {ns} shelters" if ns else "")
-        sc_["shelters"] = ns
         sc_["label"] = "Shade at bus stops"; sc_["view"] = "stops"      # short enough for one line; the headline says what
-        sc_["headline"] = (f"{what} would keep " + (f"<em>all {base['n_stops']}</em> bus stops" if never == base['n_stops']
-                           else f"<em>{never}</em> of the {base['n_stops']} bus stops") + f" out of very strong heat stress all day, not {never_b}.")
-        mins = lambda h: f"{round(h * 60)}\u00a0minute{'s' if round(h * 60) != 1 else ''}"      # a stop's time at 38 or more
-        t_s, t_b = hrs_of(sc_['stats'], 'stops'), hrs_of(base['stats'], 'stops')
-        still = base["n_stops"] - never
-        sc_["deck"] = ((f"The average bus stop would spend no time in it, not {mins(t_b)}. " if round(t_s * 60) == 0 and not still
-                        else f"The average bus stop would spend {'under a minute' if round(t_s * 60) == 0 else mins(t_s)} in it, not "
-                             f"{mins(t_b)}{f'; {still} stops would still reach it' if still else ''}. ")
-                       + f"Footpaths would barely change: {round(path_day * 100)}% would still reach it.")
-        sc_["note"] = (f"{n_} new trees 8\u00a0m tall, each where it shades the most of a bus stop's waiting area in the hours it "
-                       f"is at 38\u00a0°C or more" + (f"; a shelter at the {ns} stops no tree could cool." if ns else "."))
+        # one fact a line (Jacob, 18 Oct 2026: "simplify some of the text ... so the message is clearer"): the headline the
+        # plan's result, the line under it the stops as they were, the note what was planted
+        for a, (N, nb, nv, _pb, _p, nt, nsh) in AREAS.items():
+            tx = sc_[a] if a else sc_; what = f"{nt:,} trees" + (f" and {nsh} shelters" if nsh else "")
+            tx["headline"] = (f"{what} would spare people waiting at " + (f"<em>all {N:,}</em> bus stops" if nv == N
+                              else f"<em>{nv:,}</em> of the {N:,} bus stops") + " from very strong heat stress.")
+            tx["deck"] = f"As it was, {N - nb:,} of them reached 38\u00a0°C."
+        sc_["note"] = ((f"{n_} new trees, the fewest that shade every stop in each hour it would reach 38\u00a0°C" if tj.get("stops_exact") else
+                        f"{n_} new trees, each where it shades the most of a bus stop in the hours it reaches 38\u00a0°C")
+                       + (f", and a shelter at the {ns} stops no tree can shade. " if ns else ". ") + TREE_IS)
     else:
         more = f"{round(len(new) / sc_['existing'] * 100)}% more trees" if sc_.get("existing") else f"{n_} new trees"
         sc_["label"] = more[0].upper() + more[1:]; sc_["view"] = "paths"
-        p_ = round(path_day * 100)
-        sc_["headline"] = (f"{more[0].upper() + more[1:]} would " + ("halve" if 0.45 <= p_ / max(pct_b, 1) <= 0.55 else "cut")
-                           + f" the footpaths that reach very strong heat stress: <em>{p_}%</em>, not {pct_b}%.")
-        sc_["deck"] = (f"A stretch of footpath would spend {hrs_of(sc_['stats'], 'paths'):.1f}\u00a0hours in it, not "
-                       f"{hrs_of(base['stats'], 'paths'):.1f}, and {round(sc_['day_stats']['paths'][-1] * 100)}% would spend 5\u00a0hours "
-                       f"or more, not {round(base['day']['stats']['paths'][-1] * 100)}%. {never} of the {base['n_stops']} bus stops would stay "
-                       f"out of it all day, not {never_b}.")
+        for a, (N, _nb, nv, pb, p_, _nt, nsh) in AREAS.items():      # the stops no tree cools get shelters, as in the stop plan
+            tx = sc_[a] if a else sc_
+            tx["headline"] = (f"{more[0].upper() + more[1:]} would " + ("halve" if 0.45 <= p_ / max(pb, 1) <= 0.55 else "cut")
+                              + f" the footpaths where walkers face very strong heat stress, from {pb}% to <em>{p_}%</em>.")
+            tx["deck"] = ((f"Every bus stop would stay below 38\u00a0°C too" + (f", with a shelter at each of the {nsh} that no tree can shade." if nsh else "."))
+                          if nv == N else f"{nv:,} of the {N:,} bus stops would stay below 38\u00a0°C.")
         first = sum(1 for c in new if c.get("phase") == 1)
-        sc_["note"] = (f"{n_} new trees 8\u00a0m tall" + (f" beside the {sc_['existing']:,} trees and tall shrubs standing now (counted from the lidar)"
-                       if sc_.get("existing") else "") + (f": first the {first:,} for the bus stops, then each where its shade falls on the "
-                       "most sunlit footpath in the hottest hours." if first else ", each where its shade falls on the most sunlit footpath and "
-                       "bus stop in the hottest hours."))
+        sc_["note"] = (f"{n_} new trees" + (f", one for every {round(sc_['existing'] / len(new))} standing now" if sc_.get("existing") else "")
+                       + (": first by the bus stops, then where they shade the most sunlit footpaths in the hottest hours. "
+                          if first else ", each where it shades the most sunlit footpath and bus stop in the hottest hours. ") + TREE_IS)
     json.dump(base, open(WEB / "data.json", "w"), separators=(",", ":"), ensure_ascii=False)
     print(f"scenario {SCEN}: {len(new)} trees; footpaths at 38 or more for an hour {sc_['path_day']:.1%} "
           f"(today {1 - base['day']['stats']['paths'][0]:.1%}); stops never at 38 {never} (today {never_b})", flush=True)
@@ -587,32 +643,52 @@ labs = [{"label": f"{ampm(h)}–{ampm(h + 1)}", "short": ampm(h), "file": f, "ta
 _w = sorted({(lambda d: d.year if d.month >= 7 else d.year - 1)(__import__("datetime").date.fromisoformat(pool[t]["flown"])) for t in tiles})
 _w = [f"{y}–{str(y + 1)[2:]}" for y in _w]
 WINTERS = f"in winter {_w[0]}" if len(_w) == 1 else f"in the winters of {', '.join(_w[:-1])} and {_w[-1]}"
+# what 38 means (Jacob, 18 Oct 2026: "we have demarked 38 degrees with the significance of being between healthy / not
+# healthy. check this is the case. if not, adjust"): not a line between healthy and not. It is where the UTCI scale's
+# very strong heat stress begins, its physiology from Blazejczyk et al. 2013 (Geographia Polonica 86(1), Table 2: from 38,
+# a rise in core temperature at 30 min; from 32, at 120 min). Death rates in much of Europe rise from 26 and 32 (Di
+# Napoli et al. 2018, Int J Biometeorol 62), but on the day every footpath reached 32 (strong heat stress) at some hour,
+# so 32 would mark everything; 38 is the band edge shade still decides. The page says only what 38 means (its 26 to 32
+# sentence taken out: Jacob, 19 Oct 2026, asked for it to be removed)
+STRESS = ("From a UTCI of 38\u00a0°C (very strong heat stress), a walker's core temperature starts to rise within half an hour "
+          "(Błażejczyk et al. 2013)." if mode == "utci" else "")
+# what the land cover cannot tell (19 Oct 2026, landcover_fields_method.md, Decision: not applied): winter's bare fields
+# can read as paving. Said on the page until Jacob, 19 Oct 2026: "the bit about fields is unneeded, it is already stated
+# it is flown in winter"
 # h is the UTC end of solweig's hour, so the hour in BST (UTC + 1) runs from h to h + 1
 data = {
     "mode": mode, "area": AREA[0].upper() + AREA[1:], "classes": classes, "colors": colors, "hot": hot, "unit": unit, "now_fmt": now_fmt, "count_fmt": count_fmt, "key": key,
     "headline": head, "deck": deck,
     # how the map was made, in plain steps (Jacob, 18 Oct 2026: "How this was made doesn't actually explain that this models
     # all the trees and buildings in MK using lidar segmentation and then uses heat modelling using like air temp, wind")
-    "sources": (f"Environment Agency lidar flown {WINTERS} gives the shape of the whole area. A custom deep-learning model sorts its points "
-                "into ground, buildings, trees and water. SOLWEIG (Lindberg et al. 2008) then follows the sun over those buildings and "
-                "trees hour by hour on 13 August 2026 and works out the radiant heat a person takes in on each 1 m square. With each "
-                "hour's air temperature, humidity, wind and sunshine from the Met Office's 2 km UKV model, that gives the feels-like "
-                "temperature (UTCI). Footpaths are from OpenStreetMap and bus stops from NaPTAN; places built since the flight are "
-                "greyed. New trees are placed as TreePlanter does (Wallenberg et al. 2022)."),
+    # shorter (Jacob, 19 Oct 2026: "make this conciser")
+    "sources": (f"Environment Agency lidar flown {WINTERS} gives the shape of the area; a custom deep-learning model sorts its points "
+                "into ground, buildings, trees and water. SOLWEIG (Lindberg et al. 2008) follows the sun over them hour by hour on "
+                "13 August 2026 and, with the Met Office's 2 km UKV air temperature, humidity and wind, gives the feels-like "
+                "temperature (UTCI) on each 1 m square. Footpaths are from OpenStreetMap, bus stops from NaPTAN; places built since "
+                "the flight are greyed. New trees are placed as TreePlanter does (Wallenberg et al. 2022). Urban means the census "
+                "areas the ONS classes as urban (2021). " + STRESS),
     # every source the figures rest on, in its own requested words where it asks for some (the README's references, checked
     # 18 Oct 2026: OS OpenMap Local's outlines were used and not credited; Open-Meteo asks for "Weather data by Open-Meteo.com")
     "credits": ("© OpenStreetMap contributors · Protomaps · Lidar © Environment Agency · NaPTAN © DfT · Contains OS data © Crown "
-                "copyright and database right 2026 · Boundary: ONS · Weather: Met Office UKV (CC BY-SA 4.0), weather data by "
+                "copyright and database right 2026 · Boundaries and urban areas: ONS · Weather: Met Office UKV (CC BY-SA 4.0), weather data by "
                 "Open-Meteo.com · MapLibre"),
     "hours": labs, "ticks": [ampm(h) for h in hours[::3]], "start": peak,
     "stats": {v: frac[v].round(4).tolist() for v in frac}, "n_stops": n_stops,
+    # the urban part's figures (area.urban), which the page shows first, and its outline (to 1 m, the model's cell)
+    "urban": {"stats": {v: ufrac[v].round(4).tolist() for v in ufrac}, "day_stats": day_share(udstats), "n_stops": n_stops_u,
+              "headline": uhead, "view_small": {"ground": "", "paths": "", "stops": f"of {n_stops_u:,}"},
+              "outline": mapping(shapely.set_precision(stransform(lambda a, b, *_: to_wgs(a, b), urb.boundary.simplify(1.0)), 1e-6))},
     "day": {"lo": day_lo, "colors": ["--d0", "--d1", "--d2", "--d3"], "labels": ["None", "1–2", "3–4", "5 or more"],
-            "stats": {v: (dstats[v] / max(dstats[v].sum(), 1)).round(4).tolist() for v in dstats},
+            "stats": day_share(dstats),
             "peak_ta": round(max(wx["temperature_2m"][wxi[h]] for h in hours), 1)},
-    "view_small": ({"ground": "of open ground at 38° or more", "paths": "of path length at 38° or more", "stops": f"of {n_stops:,} stops at 38° or more"}
-                   if mode == "utci" else {"ground": "of open ground in sun", "paths": "of path length in sun", "stops": f"of {n_stops:,} stops in sun"}),
-    "view_small_day": {"ground": "of open ground reached 38° at some hour", "paths": "of path length reached 38° at some hour",
-                       "stops": f"of {n_stops:,} stops reached 38° at some hour"},
+    # the cards' condition said once, above them, and under a card only what its number is out of (Jacob, 18 Oct 2026:
+    # "simplify some of the text"; each card said "of path length reached 38° at some hour" and the like)
+    "view_small": {"ground": "", "paths": "", "stops": f"of {n_stops:,}"},
+    "view_small_day": {"ground": "", "paths": "", "stops": f"of {n_stops:,}"},
+    # the line under the headline defines 38 for at least an hour, so the day's line says no more than "reached"
+    "views_head": ({"day": "Reached 38\u00a0°C during the day", "hour": "At 38\u00a0°C or more, {h}"} if mode == "utci"
+                   else {"day": "In sun at some hour", "hour": "In sun, {h}"}),
     "pieces": [{"id": pc["id"], "corners": pc["corners"]} for pc in pieces],
     "ground_corners": corners, "bounds": [[min(c[0] for c in corners), min(c[1] for c in corners)], [max(c[0] for c in corners), max(c[1] for c in corners)]],
     "labels": [l | {"kind": "big" if l["big"] else "suburb", "minz": 0 if l["big"] else 13} for l in labels.values()] + extra, "paths": paths, "stops": stops, "grey": {"type": "FeatureCollection", "features": grey_f},

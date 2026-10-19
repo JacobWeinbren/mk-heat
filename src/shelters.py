@@ -6,8 +6,8 @@ page's stop figures average; a shelter's own plan is smaller, about 2.5 x 1.6 m)
   existing  the stops OSM tags shelter=yes today (bus_stops_now.json, Overpass 18 Oct 2026, joined to NaPTAN by ATCO
             code): writes layers/shelters_cdsm/<tile>.npy for every crop a roof falls in (utci.py adds it to every
             run) and layers/shelters.json (the ATCO codes, for the page)
-  add NAME  a new shelter at every stop the scenario NAME still has at 38 C UTCI or more in some hour (utci_NAME/, the
-            stop's 3 x 3 m mean as the page counts it) that has none: adds the roofs to layers/NAME_cdsm/<tile>.npy,
+  add NAME  a new shelter at every stop the scenario NAME still has at 38 C UTCI or more in some hour (utci_NAME/, as the
+            page counts it: the coolest cell of the stop's 3 x 3 m that is not a building, in whole degrees) that has none: adds the roofs to layers/NAME_cdsm/<tile>.npy,
             deletes those tiles' utci_NAME files so utci.py runs them again, and records them in layers/NAME.json
 usage: <heat venv python> -I shelters.py <repo root> existing|add NAME
 """
@@ -42,7 +42,7 @@ def put(stops, folder):
             r0, c0 = int(by1 - 1 - nn), int(e - bx0)
             sl = (slice(max(r0 - 1, 0), r0 + 2), slice(max(c0 - 1, 0), c0 + 2))
             a[sl] = np.where(dsm[sl] > dem[sl], a[sl], np.maximum(a[sl], ROOF_H))     # never on a building cell
-        np.save(f, a); n += 1
+        np.save(f, a.astype(np.float16)); n += 1                 # half precision, as treeplant.py writes
     return n
 
 
@@ -75,8 +75,16 @@ elif STEP == "add":
             with np.load(f) as z:
                 u = z["utci"] / 10
             r0, c0 = int(cy1 - 1 - nn), int(e - cx0)
-            mean = u[:, max(r0 - 1, 0):r0 + 2, max(c0 - 1, 0):c0 + 2].mean(axis=(1, 2))
-            if (mean >= HOT).any():
+            win = (slice(max(r0 - 1, 0), r0 + 2), slice(max(c0 - 1, 0), c0 + 2))
+            # the page's stop (package.py): its coolest cell each hour, buildings left out, rounded to a whole degree.
+            # The mean of the nine cells, used until the page took the coolest (Jacob, 18 Oct 2026: "yes judge every
+            # stop by its coolest spot"), asked for 381 shelters after the fewest trees, which shade only part of a stop
+            with np.load(H / "shade" / f"{t}.npz") as sz:
+                open_ = ~sz["bld"].astype(bool)[win]
+            if not open_.any():
+                break                                  # under a roof: the page draws it as in shade all day
+            coolest = np.nanmin(u[(slice(None), *win)][:, open_], axis=1)
+            if (np.round(coolest) >= HOT).any():
                 new.append((e, nn, r["ATCOCode"]))
             break
     n = put([(e, nn) for e, nn, _ in new], L / f"{name}_cdsm")

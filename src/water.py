@@ -1,78 +1,63 @@
 """Water for the heat map (Jacob, 18 Oct 2026: "willen lake is a big red splotch. obviously people don't walk in lakes,
-rivers, streams, ponds - can you account for this?"). The lidar sees little of still water, so v1 labels most of a
-lake's few returns Ground and the land cover (landcover.py) made Willen Lake 73% paved. This adds OpenStreetMap's
-water areas as on 17 Jan 2021 (the survey's month, as the roads and buildings), over the basemap's extent:
-  natural=water, waterway=riverbank, landuse=reservoir or basin, leisure=swimming_pool (ways and multipolygon
-  relations), and waterway=river, canal, stream, ditch or drain lines that carry an OSM width, at that width;
-a line without a width is left out (its width is unknown); the land cover's own water (most returns Water) still counts.
-fetch writes osm/water_2021-01-17.json (Overpass); polygons() gives the union in British National Grid.
-usage: <heat venv python> -I water.py <repo root> fetch
+rivers, streams, ponds - can you account for this?"). The lidar sees little of still water: v1 labels most of a lake's
+few returns Ground, and the land cover (landcover.py) made Willen Lake 73% paved. Water is therefore also taken from
+OpenStreetMap's water areas as the Protomaps basemap holds them at zoom 15 (basemap_mk.pmtiles, a Planetiler build of
+OSM as of 17 Oct 2026; tile precision about 0.2 m): every polygon of its water layer (lakes, ponds, reservoirs, river
+and canal areas, basins, pools). Its lines (streams and rivers drawn as a line) have no width and are left out. Water
+is stable, so today's map stands in for 2021's (the dated Overpass query for 17 Jan 2021 ran out of memory on the public
+server, 18 Oct 2026).
+polygons(H, bounds) gives the union in British National Grid over a BNG box.
 """
-import json, sys, urllib.parse, urllib.request
+import gzip, math
 from pathlib import Path
 
-ROOT = Path(sys.argv[1]) if __name__ == "__main__" else None
-DATE = "2021-01-17T00:00:00Z"
-OVERPASS = "https://overpass-api.de/api/interpreter"
-LINES = "river|canal|stream|ditch|drain"
 
-
-def fetch(H):
-    """water areas and wide waterways as on DATE over the basemap's bounds (pmtiles header)"""
+def polygons(H: Path, bounds, z: int = 15):
+    """the basemap's water areas over the BNG box bounds = (x0, y0, x1, y1), as one shapely geometry in BNG"""
+    import mapbox_vector_tile as mvt
     from pmtiles.reader import Reader, MmapSource
-    with open(H / "basemap_mk.pmtiles", "rb") as f:
-        hd = Reader(MmapSource(f)).header()
-    s, w, n, e = hd["min_lat_e7"] / 1e7, hd["min_lon_e7"] / 1e7, hd["max_lat_e7"] / 1e7, hd["max_lon_e7"] / 1e7
-    q = f"""[out:json][timeout:300][date:"{DATE}"][bbox:{s},{w},{n},{e}];
-(
-  way["natural"="water"]; relation["natural"="water"];
-  way["waterway"="riverbank"]; relation["waterway"="riverbank"];
-  way["landuse"~"^(reservoir|basin)$"]; relation["landuse"~"^(reservoir|basin)$"];
-  way["leisure"="swimming_pool"];
-  way["waterway"~"^({LINES})$"]["width"];
-);
-out geom;"""
-    req = urllib.request.Request(OVERPASS, data=urllib.parse.urlencode({"data": q}).encode(),
-                                 headers={"User-Agent": "mk-heat-map (lidar-review)"})
-    d = json.load(urllib.request.urlopen(req, timeout=600))
-    out = H / "osm" / "water_2021-01-17.json"
-    json.dump(d, open(out, "w"))
-    print(f"{len(d['elements'])} elements -> {out}")
-
-
-def polygons(H, to_bng):
-    """the union of the water areas and the wide waterways, in British National Grid (shapely)"""
-    from shapely.geometry import LineString, Polygon
-    from shapely.ops import linemerge, polygonize, unary_union
-
-    def num(v):
-        try:
-            return float(str(v).split(";")[0].replace("m", "").strip())
-        except ValueError:
-            return None
+    from pyproj import Transformer
+    from shapely.geometry import shape
+    from shapely.ops import transform as stransform, unary_union
+    from shapely.validation import make_valid
+    to_wgs = Transformer.from_crs(27700, 4326, always_xy=True).transform
+    to_bng = Transformer.from_crs(4326, 27700, always_xy=True).transform
+    x0, y0, x1, y1 = bounds
+    lons, lats = to_wgs([x0, x1, x0, x1], [y0, y0, y1, y1])
+    n = 2 ** z
+    tx = lambda lon: int((lon + 180) / 360 * n)
+    ty = lambda lat: int((1 - math.log(math.tan(math.radians(lat)) + 1 / math.cos(math.radians(lat))) / math.pi) / 2 * n)
     parts = []
-    for e in json.load(open(H / "osm" / "water_2021-01-17.json"))["elements"]:
-        tg = e.get("tags", {})
-        if e["type"] == "way" and e.get("geometry"):
-            x, y = to_bng([q["lon"] for q in e["geometry"]], [q["lat"] for q in e["geometry"]])
-            if tg.get("waterway") in LINES.split("|"):
-                w = num(tg.get("width"))
-                if w and len(x) >= 2:
-                    parts.append(LineString(zip(x, y)).buffer(w / 2, cap_style=2))
-            elif len(x) >= 4 and e["geometry"][0] == e["geometry"][-1]:
-                parts.append(Polygon(zip(x, y)).buffer(0))
-        elif e["type"] == "relation":
-            rings = {"outer": [], "inner": []}
-            for m in e.get("members", []):
-                if m.get("type") == "way" and m.get("geometry") and m.get("role") in rings:
-                    x, y = to_bng([q["lon"] for q in m["geometry"]], [q["lat"] for q in m["geometry"]])
-                    rings[m["role"]].append(LineString(zip(x, y)))
-            outer = unary_union(list(polygonize(linemerge(rings["outer"])))) if rings["outer"] else None
-            if outer is not None and not outer.is_empty:
-                inner = unary_union(list(polygonize(linemerge(rings["inner"])))) if rings["inner"] else None
-                parts.append(outer.difference(inner) if inner is not None and not inner.is_empty else outer)
-    return unary_union(parts)
+    with open(H / "basemap_mk.pmtiles", "rb") as f:
+        rd = Reader(MmapSource(f))
+        for x in range(tx(min(lons)), tx(max(lons)) + 1):
+            for y in range(ty(max(lats)), ty(min(lats)) + 1):
+                raw = rd.get(z, x, y)
+                if not raw:
+                    continue
+                layer = mvt.decode(gzip.decompress(raw)).get("water")
+                if not layer:
+                    continue
+                ext = layer.get("extent", 4096)
+
+                def to_lonlat(px, py, *_):         # tile units, y up (the decoder's default) -> lon, lat
+                    import numpy as np
+                    mx = (x + np.asarray(px) / ext) / n
+                    my = (y + (ext - np.asarray(py)) / ext) / n
+                    return mx * 360 - 180, np.degrees(np.arctan(np.sinh(np.pi * (1 - 2 * my))))
+                for ft in layer["features"]:
+                    if ft["geometry"]["type"] not in ("Polygon", "MultiPolygon"):
+                        continue
+                    g = make_valid(shape(ft["geometry"]))
+                    parts.append(stransform(lambda a, b, *_: to_bng(*to_lonlat(a, b)), g))
+    u = unary_union([p for p in parts if not p.is_empty])
+    return u.buffer(0)
 
 
-if __name__ == "__main__" and sys.argv[2:3] == ["fetch"]:
-    fetch(ROOT / "data" / "mk" / "heat")
+if __name__ == "__main__":
+    import sys, json
+    ROOT = Path(sys.argv[1]); H = ROOT / "data" / "mk" / "heat"
+    pool = json.load(open(H / "rounds" / "pool.json"))["tiles"]
+    b = (min(t["core"][0] for t in pool), min(t["core"][1] for t in pool), max(t["core"][2] for t in pool), max(t["core"][3] for t in pool))
+    w = polygons(H, b)
+    print(f"water over the modelled tiles: {w.area / 1e6:.2f} km2 in {len(getattr(w, 'geoms', [w]))} parts")

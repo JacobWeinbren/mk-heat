@@ -4,10 +4,11 @@ archives on R2 (bucket maps, at maps.weinbren.me), read in byte ranges, so a vis
 Pages itself answers a byte-range request with the whole file (tested on mk-heat.pages.dev, 18 Oct 2026). The archives,
 built in web/tiles/:
 - basemap.pmtiles: out/basemap.txt's archive (basemap.py) as bytes;
-- features.pmtiles: the footpaths, stops, greyed areas and new trees as vector tiles (tippecanoe), each with its day as
+- features.pmtiles: the footpaths, stops and greyed areas as vector tiles (tippecanoe), each with its day as
   the artifact's page builds it (v, a character an hour, value + 35; d, its hours at 38 °C or more; v_NAME and d_NAME
   where a scenario changes them) and a stop's name, place and shelter; every feature at every zoom from 8 (the page's
   least zoom on a phone) to 15, from which MapLibre draws the closer zooms;
+- trees.pmtiles: the plans' new trees, from the zoom the page draws them at to 15;
 - ground/<name>.pmtiles: each ground image (package.py's pieces, already Web Mercator) as 512 px PNG tiles, nearest, so
   the map keeps the classes the chart counts, from zoom 8 to the zoom whose pixel is nearest the image's own;
 and on the site itself: glyphs/<face>_<range>.pbf (the faces and ranges the labels use), vendor/ (MapLibre GL JS 4.7.1 and PMTiles 3.2.1 as
@@ -65,6 +66,7 @@ for f in ("maplibre-gl-4.7.1.js", "pmtiles-3.2.1.js"):
     shutil.copyfile(W / "vendor" / f, SITE / "vendor" / f)
 
 # the model's features as vector tiles
+TREE_Z = int(re.search(r"id: 'trees'[^\n]*?minzoom: (\d+)", (W / "template.html").read_text()).group(1))
 HOT = D["classes"][D["hot"]]["lo"]
 enc = lambda v: "".join(chr(x + 35) for x in v)
 hot = lambda v: sum(1 for x in v if x >= HOT)
@@ -106,8 +108,13 @@ with tempfile.TemporaryDirectory(dir=W) as tmp:
     # every feature at every zoom: no dropping (-r1), no feature or tile size limits
     subprocess.run(["tippecanoe", "-o", str(TILES / "features.pmtiles"), "--force", "--quiet", f"-Z{ZMIN}", "-z15", "-r1",
                     "--no-feature-limit", "--no-tile-size-limit", "--attribution", D.get("credits", ""),
-                    *[a for nm in ("paths", "stops", "grey", "trees") for a in ("-L", f"{nm}:{tmp / (nm + '.geojsonl')}")]], check=True)
-print("features", (TILES / "features.pmtiles").stat().st_size, flush=True)
+                    *[a for nm in ("paths", "stops", "grey") for a in ("-L", f"{nm}:{tmp / (nm + '.geojsonl')}")]], check=True)
+    # the plans' new trees in an archive of their own, from the zoom the page draws them at (its trees layer's minzoom):
+    # in the footpaths' archive they were in every tile from zoom 8, half the features of the opening view's tiles
+    # (49,652 of 96,458 in its largest, 19 Oct 2026), fetched by every visitor and never drawn below 15
+    subprocess.run(["tippecanoe", "-o", str(TILES / "trees.pmtiles"), "--force", "--quiet", f"-Z{TREE_Z}", "-z15", "-r1",
+                    "--no-feature-limit", "--no-tile-size-limit", "-L", f"trees:{tmp / 'trees.geojsonl'}"], check=True)
+print("features", (TILES / "features.pmtiles").stat().st_size, "trees", (TILES / "trees.pmtiles").stat().st_size, flush=True)
 
 # the ground images as raster tiles
 pieces = {p["id"]: p for p in D["pieces"]}
@@ -115,7 +122,7 @@ names = sorted({f.stem.rsplit("_", 1)[0] for f in (OUT / "ground").glob("*.png")
 for old in (TILES / "ground").glob("*.pmtiles"):
     if old.stem not in names:
         old.unlink()
-total = 0
+total, zooms = 0, set()
 for name in names:
     ims = {pid: Image.open(OUT / "ground" / f"{name}_{pid}.png") for pid in pieces}
     pal = ims[min(ims)].getpalette()
@@ -134,6 +141,7 @@ for name in names:
     x0, y0 = xl, yt
     x1, y1 = x0 + canvas.shape[1] * res, y0 - canvas.shape[0] * res
     zmax = round(math.log2(2 * HALF / (TILE * res)))          # the zoom whose pixel is nearest the image's own
+    zooms.add(zmax)
     path = TILES / "ground" / f"{name}.pmtiles"
     with open(path, "wb") as f:
         wr = Writer(f); n = 0
@@ -156,7 +164,7 @@ for name in names:
                     im = Image.fromarray(t, "P"); im.putpalette(pal)
                     b = io.BytesIO(); im.save(b, "PNG", transparency=255, compress_level=9)
                     wr.write_tile(zxy_to_tileid(z, tx, ty), b.getvalue()); n += 1
-        w_, s_ = lonlat(x0, y1); e_, n_ = lonlat(x1, y0)
+        w_, s_ = lonlat(x0, y1); e_, n_ = lonlat(x1, y0); ground_bounds = (w_, s_, e_, n_)
         wr.finalize(header(TileType.PNG, Compression.NONE, ZMIN, zmax, (w_, s_, e_, n_)), {"name": name})
     total += path.stat().st_size
     print(f"ground {name}: {n} tiles, zooms {ZMIN}-{zmax}, {path.stat().st_size:,} bytes", flush=True)
@@ -172,7 +180,7 @@ ACCOUNT = "148ef3a765d15218b5651d5de86b92db"          # Jacob's own Cloudflare a
 sent_f = TILES / "uploaded.json"
 sent = json.loads(sent_f.read_text()) if sent_f.exists() else {}
 index = {}
-for key, arc in [("basemap", TILES / "basemap.pmtiles"), ("features", TILES / "features.pmtiles"),
+for key, arc in [("basemap", TILES / "basemap.pmtiles"), ("features", TILES / "features.pmtiles"), ("trees", TILES / "trees.pmtiles"),
                  *[(f"ground/{f.stem}", f) for f in sorted((TILES / "ground").glob("*.pmtiles"))]]:
     obj = f"{PREFIX}/{key}.{hashlib.sha1(arc.read_bytes()).hexdigest()[:12]}.pmtiles"
     if obj not in sent:
@@ -181,6 +189,10 @@ for key, arc in [("basemap", TILES / "basemap.pmtiles"), ("features", TILES / "f
                        check=True, capture_output=True, env={**__import__("os").environ, "CLOUDFLARE_ACCOUNT_ID": ACCOUNT})
         sent[obj] = arc.stat().st_size; sent_f.write_text(json.dumps(sent, indent=1))
     index[key] = f"{HOST}/{obj}"
+# the ground images' zooms, so the page can name their tiles without reading each archive's header first
+assert len(zooms) == 1, f"the ground images' zooms differ: {zooms}"
+index["_ground"] = {"minzoom": ZMIN, "maxzoom": zooms.pop(), "bounds": [round(v, 6) for v in ground_bounds]}
+index["_trees"] = {"minzoom": TREE_Z, "maxzoom": 15}
 (TILES / "index.json").write_text(json.dumps(index, indent=1))
 print(f"tiles: {len(index)} archives on R2 ({BUCKET}/{PREFIX}/)", flush=True)
 for old in ("basemap.pmtiles", "features.pmtiles"):        # the archives live on R2, not on the site
@@ -191,6 +203,6 @@ for old in ("ground", "v", "r"):
 YEAR = "Cache-Control: public, max-age=31536000, immutable"
 (SITE / "_headers").write_text("\n".join([
     "/", "  Cache-Control: public, max-age=0, must-revalidate", "/index.html", "  Cache-Control: public, max-age=0, must-revalidate",
-    *[ln for p in ("/meta.json", "/glyphs/*", "/vendor/*") for ln in (p, "  " + YEAR)],
+    *[ln for p in ("/meta.json", "/page.js", "/glyphs/*", "/vendor/*") for ln in (p, "  " + YEAR)],
     "/*", "  X-Content-Type-Options: nosniff", ""]))
 subprocess.run(["python3", str(W / "build.py")], check=True)

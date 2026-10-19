@@ -24,16 +24,21 @@ def fill(s, el_id, inner):
     return pat.sub(lambda m: m.group(1) + inner + m.group(4), s)
 
 
-share = {v: 1 - D["day"]["stats"][v][0] for v in ("ground", "paths", "stops")}
-num = {v: f"{round(share[v] * D['n_stops']):,}" if v == "stops" else f"{round(share[v] * 100)}%" for v in share}
+# the page opens on the urban part's figures where package.py gave them (the switch's first state)
+FIG = D.get("urban") or {}
+share = {v: 1 - FIG.get("day_stats", D["day"]["stats"])[v][0] for v in ("ground", "paths", "stops")}
+num = {v: f"{round(share[v] * FIG.get('n_stops', D['n_stops'])):,}" if v == "stops" else f"{round(share[v] * 100)}%" for v in share}
 day_key = (f'<i style="background:var({c})"></i>' for c in D["day"]["colors"])
-for el_id, inner in [("when", html.escape(f"{D['area']}, Thursday 13 August 2026")), ("h1", D["headline"]), ("deck", html.escape(D["deck"])),
+for el_id, inner in [("when", html.escape(f"{D['area']}, Thursday 13 August 2026")), ("h1", FIG.get("headline", D["headline"])), ("deck", html.escape(D["deck"])),
                      ("src", D["sources"]), ("cred", html.escape(D["credits"])), ("keyh", "Hours that felt like 38 °C or more"),
                      ("air", f"Air peaked at {D['day']['peak_ta']:.0f} °C"), ("m-hour", D["hours"][D["start"]]["label"]),
                      ("ticks", "".join(f"<span>{t}</span>" for t in D["ticks"])),
                      ("scale", "".join(day_key) + "".join(f"<span>{l}</span>" for l in D["day"]["labels"])),
-                     *[(f"n-{v}", num[v]) for v in share], *[(f"s-{v}", html.escape(D["view_small_day"][v])) for v in share]]:
+                     *[(f"n-{v}", num[v]) for v in share], *[(f"s-{v}", html.escape(FIG.get("view_small", D["view_small_day"])[v])) for v in share],
+                     ("vh", html.escape(D.get("views_head", {}).get("day", "")))]:
     page = fill(page, el_id, inner)
+if FIG:                                                 # the switch of where the figures are of, from the first paint
+    page = page.replace('id="where" hidden>', 'id="where">')
 if D.get("scenarios"):                                  # the switch shows from the first paint, one button a scenario
     page = page.replace('<div class="scen" id="scen" hidden>', '<div class="scen" id="scen">')
     page = fill(page, "scbtns", '<button type="button" data-s="" aria-pressed="true">As it was</button>' + "".join(
@@ -97,8 +102,22 @@ if TI.exists():
     V = vers(SITE, [SITE / "meta.json", *sorted((SITE / "glyphs").glob("*.pbf"))])
     TS = json.loads(TI.read_text())
     site = made("site", V, ("vendor/maplibre-gl-4.7.1.js", "vendor/pmtiles-3.2.1.js"), TS)
+    # the page's own script in a file of its own named by its hash, kept a year: the page, which is fetched whole on
+    # every visit (Pages sends it with no ETag to check against), keeps only the card's text and the font (inline so
+    # the card's text does not move, above)
+    i0 = site.rindex('<script data-cfasync="false">'); i1 = site.index("</script>", i0)
+    js = site[i0 + len('<script data-cfasync="false">'):i1]
+    (SITE / "page.js").write_text(js)
+    jsv = hashlib.sha1(js.encode()).hexdigest()[:10]
+    site = site[:i0] + f'<script data-cfasync="false" src="page.js?v={jsv}"></script>' + site[i1 + len("</script>"):]
+    # the place names' glyphs (the labels the opening view shows; Latin, the 0-255 range) asked for with the page, not
+    # after the first tiles are drawn (19 Oct 2026: asked at 0.8 s of a 1 s load)
+    place_face = re.search(r"id: 'lab-place'.*?'text-font': \['([^']+)'\]", page, re.S).group(1)
+    gl = f"glyphs/{place_face.replace(' ', '_')}_0-255.pbf"
     # the card's figures are asked for while the page is read, before the scripts run; the tiles' host is connected early
     tile_host = "/".join(next(iter(TS.values())).split("/")[:3])
     (SITE / "index.html").write_text(head(f'<link rel="preload" href="meta.json?v={V["meta.json"]}" as="fetch" crossorigin>'
-                                          f'<link rel="preconnect" href="{tile_host}" crossorigin>') + site + "</html>")
+                                          f'<link rel="preconnect" href="{tile_host}" crossorigin>'
+                                          + (f'<link rel="preload" href="{gl}?v={V[gl]}" as="fetch" crossorigin>' if gl in V else ""))
+                                     + site + "</html>")
 print("built", OUT, "| font", {k: sorted(v) for k, v in glyphs.items()}, "| site" if (SITE / "index.html").exists() else "")
