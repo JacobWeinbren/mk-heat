@@ -279,14 +279,20 @@ const paths = SITE ? null : { type: 'FeatureCollection', features: D.paths.map((
 const stops = SITE ? null : { type: 'FeatureCollection', features: D.stops.map((s, i) =>
   ({ type: 'Feature', geometry: { type: 'Point', coordinates: [s.x, s.y] }, properties: props(i, s.g, s.v, 'stops') })) };
 // a scenario's value where it changes the feature (the site's tiles hold only those), else the day as it was
-const pick = k => scen ? ['coalesce', ['get', k + '_' + scen], ['get', k]] : ['get', k];
-const dayCls = () => { const e = ['step', pick('d'), DCOLS[0]]; D.day.lo.slice(1).forEach((lo, k) => e.push(lo, DCOLS[k + 1])); return ['case', ['==', ['get', 'g'], 1], tok('--grey'), ['==', ['get', 'g'], 2], tok('--grey'), e]; };
-// the footpaths and stops have a layer for the day and one for each hour, coloured once (again only when the scenario
-// changes): the slider shows one and hides the one before, which redraws in a frame. One layer recoloured at each step
-// made MapLibre parse every tile again, and the tiles came back one by one, a patchwork of two hours (Jacob,
-// 18 Oct 2026: "when I use the slider it still flashes weirdly between hours")
-const KEYS = ['day', ...D.hours.map((_, k) => k)];
-const colourOf = k => k === 'day' ? dayCls() : cls(k);
+const pick = (k, s = scen) => s ? ['coalesce', ['get', k + '_' + s], ['get', k]] : ['get', k];
+const dayCls = (s = scen) => { const e = ['step', pick('d', s), DCOLS[0]]; D.day.lo.slice(1).forEach((lo, k) => e.push(lo, DCOLS[k + 1])); return ['case', ['==', ['get', 'g'], 1], tok('--grey'), ['==', ['get', 'g'], 2], tok('--grey'), e]; };
+// the footpaths and stops have a layer for the day and one for each hour: the slider shows one and hides the one
+// before, which redraws in a frame. One layer recoloured at each step made MapLibre parse every tile again, and the
+// tiles came back one by one, a patchwork of two hours (Jacob, 18 Oct 2026: "when I use the slider it still flashes
+// weirdly between hours"). A colour that follows the features is set when MapLibre parses a tile, for every layer of
+// the tile's source at once, so a recoloured layer showed the scenario before for seconds, then jumped (Jacob,
+// 20 Oct 2026: "when I click 10 percent more trees, it shows as it was paths then it flashes to 10 percent more
+// trees"). So the day's layer is one for each scenario, made with the map: a scenario's button shows its layer. The
+// hours' layers are made when the hour view first shows, for the scenario shown (makeHours): the day view, where the
+// page opens, parses its tiles for six colour layers, not thirty.
+const SKEYS = ['', ...Object.keys(SCS)];
+const dayKey = s => 'day' + (s ? '-' + s : '');
+const HKEYS = D.hours.map((_, k) => k);
 // an opacity changes at once: MapLibre fades paint changes over 300 ms by default, and two layers fading against each
 // other let the map show through between hours
 const NOW = { duration: 0, delay: 0 };
@@ -336,20 +342,45 @@ const swapGround = () => { if (groundWant && groundWant !== groundShown && map.i
 // the day's or the hour's layer of the view shown (footpaths or stops), the one shown before hidden in the same frame
 let linesOn = { paths: null, stops: null };
 const showLines = () => {
-  const k = mode === 'day' ? 'day' : hi;
+  // in the hour view, the hours' set shown (that of the scenario before while the new one is parsed), else the day's
+  const k = mode === 'day' || !hourSet ? dayKey(scen) : `${hi}.${hourSet.n}`;
   [['paths', 'line-opacity'], ['stops', 'circle-opacity']].forEach(([v, prop]) => {
     const want = view === v ? k : null;
-    if (want === linesOn[v]) return;
+    if (want === linesOn[v] || (want !== null && !map.getLayer(v + ':' + want))) return;   // (an hour of the set before)
     if (want !== null) map.setPaintProperty(v + ':' + want, prop, 1);
     if (linesOn[v] !== null) map.setPaintProperty(v + ':' + linesOn[v], prop, 0);
     linesOn[v] = want;
   });
 };
-// a scenario's colours, all layers at once (MapLibre then parses the tiles once)
-const recolour = () => KEYS.forEach(k => { map.setPaintProperty('paths:' + k, 'line-color', colourOf(k)); map.setPaintProperty('stops:' + k, 'circle-color', colourOf(k)); });
+// the hours' layers, a set for one scenario ({scen, n}; layer ids paths:<hour>.<n>): a new set is added hidden beside
+// the one shown, and takes its place in one frame once every tile of the source has been parsed with it (swapHours,
+// after each frame, as swapGround), so the map never shows a patchwork of two scenarios; the set before is then removed.
+// Meanwhile the hour view shows the set before (a scenario switched in the hour view shows once, when ready), or the
+// day's layer of the scenario when there is none of it (the hour view opened after a switch in the day view)
+let hourSet = null, hourNext = null, hourN = 0;
+// a set's layers, but those shown (the set before keeps its hour shown while the next is parsed: MapLibre parses a tile
+// for every layer of its source, so the hours that cannot show then are removed first; the slider waits meanwhile)
+const dropHours = (set, keep = []) => HKEYS.forEach(k => ['paths', 'stops'].forEach(v => {
+  const id = `${v}:${k}.${set.n}`; if (map.getLayer(id) && !keep.includes(id)) map.removeLayer(id); }));
+function makeHours() {
+  if (hourNext && hourNext.scen !== scen) { dropHours(hourNext); hourNext = null; }
+  if (hourSet && hourSet.scen !== scen && mode === 'day') { dropHours(hourSet); hourSet = null; }
+  const have = hourNext || (hourSet && !hourSet.part ? hourSet : null);
+  if (mode !== 'hour' || (have && have.scen === scen)) return;
+  if (hourSet && !hourSet.part) { dropHours(hourSet, Object.entries(linesOn).filter(([, k]) => k !== null).map(([v, k]) => v + ':' + k)); hourSet.part = true; }
+  hourNext = { scen, n: ++hourN };
+  HKEYS.forEach(k => { map.addLayer(pathLayer(`${k}.${hourN}`, cls(k)), D.urban ? 'urban' : 'trees'); map.addLayer(stopLayer(`${k}.${hourN}`, cls(k)), 'stops'); });
+}
+// MapLibre sends the tiles to be parsed again at the start of the frame after a layer is added, so from the end of that
+// frame (the render event) the source counts as loaded only once every tile has come back
+const swapHours = () => {
+  if (!hourNext || !['paths', 'stops'].every(v => map.isSourceLoaded(src(v).source))) return;
+  const old = hourSet; hourSet = hourNext; hourNext = null;
+  showLines(); if (old) dropHours(old);
+};
 // an hour's colour: the hour's character matched to its class (build.py's characters are values -34 to 56)
-const cls = h => {
-  const e = ['match', ['slice', pick('v'), h, h + 1]];
+const cls = (h, s = scen) => {
+  const e = ['match', ['slice', pick('v', s), h, h + 1]];
   D.classes.forEach((c, k) => { if (!k) return; const top = k + 1 < D.classes.length ? D.classes[k + 1].lo : 57, ch = [];
     for (let v = c.lo; v < top; v++) ch.push(String.fromCharCode(v + 35)); if (ch.length) e.push(ch, COLS[k]); });
   e.push(COLS[0]);
@@ -364,6 +395,11 @@ const src = name => SITE ? { source: 'f', 'source-layer': name } : { source: nam
 const GROUND_PAINT = { 'raster-resampling': 'nearest', 'raster-fade-duration': 0, 'raster-opacity-transition': NOW };
 const LINE = { 'line-cap': 'round', 'line-join': 'round' };
 const STOP_R = ['interpolate', ['linear'], ['zoom'], 12, 4, 14, 6.5, 17, 11];
+// a colour layer of the footpaths or the stops, hidden until shown
+const pathLayer = (k, colour) => ({ id: 'paths:' + k, type: 'line', ...src('paths'), layout: LINE,
+  paint: { 'line-color': colour, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.6, 14, 3.2, 17, 7], 'line-opacity': 0, 'line-opacity-transition': NOW } });
+const stopLayer = (k, colour) => ({ id: 'stops:' + k, type: 'circle', ...src('stops'),
+  paint: { 'circle-color': colour, 'circle-radius': STOP_R, 'circle-opacity': 0, 'circle-opacity-transition': NOW } });
 const BLDG_PAINT = { 'raster-opacity': ['interpolate', ['linear'], ['zoom'], 12, 0.5, 14, 1], 'raster-resampling': 'nearest', 'raster-fade-duration': 0 };
 const style = {
   version: 8,
@@ -418,8 +454,7 @@ const style = {
     // the paths' white edge, also what a click on a path hits
     { id: 'paths-case', type: 'line', ...src('paths'), layout: LINE,
       paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 14, 5.5, 17, 10], 'line-opacity': view === 'paths' ? 1 : 0, 'line-opacity-transition': NOW } },
-    ...KEYS.map(k => ({ id: 'paths:' + k, type: 'line', ...src('paths'), layout: LINE,
-      paint: { 'line-color': colourOf(k), 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.6, 14, 3.2, 17, 7], 'line-opacity': 0, 'line-opacity-transition': NOW } })),
+    ...SKEYS.map(s => pathLayer(dayKey(s), dayCls(s))),
     // the urban part's edge while its figures show, over the footpaths (under them it was lost among them)
     ...(D.urban ? [{ id: 'urban', type: 'line', source: 'urban', layout: { visibility: where ? 'visible' : 'none' },
                      paint: { 'line-color': tok('--ink'), 'line-width': 1.6, 'line-opacity': 0.85, 'line-dasharray': [3, 2] } }] : []),
@@ -427,8 +462,7 @@ const style = {
     // (Jacob, 18 Oct 2026: "the trees cover the map so it is hard to see their effect"); true size from zoom 17
     { id: 'trees', type: 'circle', ...(SITE && TS.trees ? { source: 't', 'source-layer': 'trees' } : src('trees')), minzoom: 15, layout: { visibility: 'none' },
       paint: { 'circle-color': '#2f5a2b', 'circle-opacity': 0.55, 'circle-radius': ['interpolate', ['exponential', 2], ['zoom'], 15, 1.5, 17, 3.4, 18, 6.8] } },
-    ...KEYS.map(k => ({ id: 'stops:' + k, type: 'circle', ...src('stops'),
-      paint: { 'circle-color': colourOf(k), 'circle-radius': STOP_R, 'circle-opacity': 0, 'circle-opacity-transition': NOW } })),
+    ...SKEYS.map(s => stopLayer(dayKey(s), dayCls(s))),
     // the stops' rings over their colour, also what a click on a stop hits
     { id: 'stops', type: 'circle', ...src('stops'),
       paint: { 'circle-color': '#ffffff', 'circle-radius': STOP_R, 'circle-opacity': 0, 'circle-stroke-color': tok('--ink'),
@@ -456,6 +490,10 @@ const style = {
 };
 // on a phone the card covers the bottom of the screen: the city fits in the space above it
 const fitPad = () => innerWidth > 640 ? { left: document.getElementById('card').offsetWidth + 32, right: 30, top: 30, bottom: 30 } : { left: 10, right: 10, top: 10, bottom: document.getElementById('card').offsetHeight + 10 };
+// two threads parse the tiles where MapLibre's default outside Safari is one (Safari: up to three): measured on this page
+// (20 Oct 2026, Chrome, the opening view), the first load to every tile 2.2 s with one, 1.6 s with two (three no
+// faster), and the hour view's layers ready in 0.8 to 1.2 s, not 1.5
+if (maplibregl.getWorkerCount() < 2 && (navigator.hardwareConcurrency || 1) >= 2) maplibregl.setWorkerCount(2);
 const map = new maplibregl.Map({ container: 'map', style, bounds: D.bounds, fitBoundsOptions: { padding: fitPad() }, maxZoom: 18.5,
   attributionControl: false, dragRotate: false, pitchWithRotate: false, renderWorldCopies: false });
 map.touchZoomRotate.disableRotation();
@@ -528,8 +566,8 @@ function render() {
   if (ready) { showGround(); prefetch(); showLines(); }
   drawKey(); drawBars(); if (pop) pop.refresh();
 }
-function setHour(k) { hi = k; mode = 'hour'; slider.value = k; render(); }
-function setMode(m) { mode = m; render(); }
+function setHour(k) { hi = k; mode = 'hour'; slider.value = k; render(); if (ready) makeHours(); }
+function setMode(m) { mode = m; render(); if (ready) makeHours(); }
 function showTrees() {
   map.setLayoutProperty('trees', 'visibility', scen ? 'visible' : 'none');
   if (SITE) { map.setFilter('trees', ['==', ['get', 's'], scen]); return; }
@@ -540,9 +578,12 @@ function setScen(name) {
   scen = name;
   document.querySelectorAll('#scbtns button').forEach(b => b.setAttribute('aria-pressed', b.dataset.s === name));
   const note = document.getElementById('scnote'); note.hidden = !name; note.textContent = name ? SCS[name].note : '';
-  if (ready) { showTrees(); recolour(); }
   if (name && SCS[name].view && SCS[name].view !== view) setView(SCS[name].view);   // the stop trees show on the stops
-  render();
+  render();                                  // the day's layer of the scenario shows at once (showLines)
+  if (ready) {
+    showTrees();
+    makeHours();                             // the hours' layers of the scenario, when an hour is shown
+  }
 }
 if (Object.keys(SCS).length) {
   const box = document.getElementById('scbtns');
@@ -630,9 +671,11 @@ map.on('click', 'paths-case', ev => {
 });
 // the controls work before the map has loaded (the card is drawn first); the map takes their state when it has
 render();
+window.mkmap = map;                          // for timing the page's interactions from outside (tests only read it)
 map.on('load', () => {
-  ready = true; if (scen) recolour(); setView(view); showTrees(); render();
+  ready = true; setView(view); showTrees(); makeHours(); render();
   if (SITE) map.on('render', swapGround);
+  map.on('render', swapHours);
   document.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');   // credits fold behind the (i)
 });
 })().catch(err => { document.getElementById('h1').textContent = 'The map could not load. Reload the page to try again.'; console.error(err); });
