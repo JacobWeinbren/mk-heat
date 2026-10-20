@@ -184,7 +184,7 @@ for t in tiles:
 print(f"carriageway and railway land: {np.mean([road[t].mean() for t in tiles]):.1%} of the modelled tiles", flush=True)
 np.savez_compressed(H / "layers" / "road_mask.npz", **road)
 # water, left out of "open ground" as the roads are (Jacob, 18 Oct 2026: "obviously people don't walk in lakes, rivers,
-# streams, ponds"): OSM's water areas (water.py) and the cells the land cover makes water (most returns v1's Water)
+# streams, ponds"): OSM's water areas (water.py) and the cells the land cover makes water (most returns the model's Water)
 import water as _water  # noqa: E402
 import rasterio.windows  # noqa: E402
 _cores = [pool[t]["core"] for t in tiles]

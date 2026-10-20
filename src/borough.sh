@@ -50,6 +50,8 @@ if [ -n "$PAUSED" ]; then
   ( unset ROUNDS_DIR; nohup zsh data/rounds/queues/nz_v3_lidar.sh > $L 2>&1 & ); say "resumed $RUN, log $L"
 fi
 [ $code = 0 ] || { say "classification exited $code"; exit $code; }
+# every flight line on one scale (intensity_lines.py; Jacob, 20 Oct 2026), from the classes just made, for the land cover
+calm; say "flight lines"; nice $PY -I $M/intensity_lines.py $PWD || exit 1
 calm; say "surfaces"; nice $PY -I $M/surfaces.py $PWD || exit 1
 say "land cover"; $HV -I $M/landcover.py $PWD || exit 1
 calm; say "shade"; $HV -I $M/shade.py $PWD || exit 1

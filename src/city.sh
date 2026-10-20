@@ -9,6 +9,7 @@ calm() { until [ "$(sysctl -n kern.memorystatus_vm_pressure_level)" = 1 ]; do sa
 PY=pipeline/.venv/bin/python; HV=data/experiments/mk_heat/.venv/bin/python
 calm; say "cut"; $PY pipeline/round.py cut --workers 1 || exit 1
 calm; say "predict"; ROUNDS_GPU_HOLDER=$$ $PY pipeline/round.py predict --round mk --checkpoint runs/pointssm_nz_v1/best.pt --workers 1 --device mps || exit 1
+calm; say "flight lines"; $PY -I data/experiments/mk_heat/intensity_lines.py $PWD || exit 1
 calm; say "surfaces"; $PY -I data/experiments/mk_heat/surfaces.py $PWD || exit 1
 say "land cover"; $HV -I data/experiments/mk_heat/landcover.py $PWD || exit 1
 calm; say "shade"; $HV -I data/experiments/mk_heat/shade.py $PWD || exit 1

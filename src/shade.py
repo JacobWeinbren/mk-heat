@@ -1,4 +1,4 @@
-"""Hourly shade on 13 Aug 2026 (the summer's hottest day) for each Milton Keynes crop, from the v1 surfaces
+"""Hourly shade on 13 Aug 2026 (the summer's hottest day) for each Milton Keynes crop, from the surfaces
 (surfaces.py), with SOLWEIG's own shadow casting (solweig.rustalgos.shadowing.calculate_shadows_wall_ht_25,
 UMEP's Ratti & Richens / Lindberg & Grimmond scheme) and its conventions: heights absolute; vegetation with a
 trunk zone of 0.25 x canopy height (solweig's default, Lindberg & Grimmond 2011); vegetation lets 3% of the beam

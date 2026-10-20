@@ -1,7 +1,7 @@
 """Mean radiant temperature (Tmrt) and UTCI per hour on 13 Aug 2026 for each Milton Keynes crop, with SOLWEIG
 (the solweig package, UMEP: Lindberg et al. 2008; vegetation as Lindberg & Grimmond 2011) at its published defaults:
 anisotropic sky, trunk zone 0.25 x canopy height, objects under 1 m flattened, a standing person, leaf-on in August.
-Surfaces from surfaces.py (v1 classes on the 2021 survey). Forcing (Jacob, 18 Oct 2026: "use the highest
+Surfaces from surfaces.py (the model in use's classes, rounds/mk/pred; 2020 and 2021 surveys). Forcing (Jacob, 18 Oct 2026: "use the highest
 resolution, most accurate, reliable data"): the Met Office UKV model at 2 km, hourly, at each tile's centre (Open-Meteo's
 Historical Forecast API, weather_ukv/, Met Office data CC BY-SA 4.0): air temperature, humidity, 10 m wind, surface
 pressure, global, direct normal and diffuse radiation (diffuse = global - direct); solweig takes each value as the hour

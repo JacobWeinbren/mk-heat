@@ -1,4 +1,5 @@
-"""SOLWEIG inputs for each Milton Keynes crop from the v1 model's classes (crude prototype, 18 Oct 2026):
+"""SOLWEIG inputs for each Milton Keynes crop from the model in use's classes (rounds/mk/pred; v1 until 20 Oct 2026,
+then night r006's fine-tune of v3 on the English answers, rebuild_en_1.sh):
 1 m rasters over the crop (core + the pool's 100 m margin, so shadows from neighbouring blocks fall in):
   dem   ground: median z of Ground and Water points per cell, gaps filled from the nearest cell
   dsm   ground + buildings and bridges: highest Building or Bridge point per cell over the dem (a bridge deck casts
@@ -6,7 +7,9 @@
         (scipy binary_closing 3x3) so roofs with missing returns stay solid, their height from the nearest roof cell
   cdsm  vegetation height above the dem (highest Vegetation point), 0 elsewhere
   hmax  the highest point of any class above the project's ground surface (below), for new_build.py
-  gint  the mean intensity of the cell's single-return Ground points (nan where none), and
+  gint  the mean intensity of the cell's single-return Ground points (nan where none), each point's intensity first
+        put on one scale by its flight line's gain and its survey's factor (intensity_lines.py, the line found by the
+        point's GPS time; a point of no line there is left out), and
   wat   the share of the cell's Ground and Water points that are Water, both for landcover.py
 The trunk zone is solweig's default (TDSM = 0.25 x CDSM, Lindberg & Grimmond 2011) in this crude pass.
 Roofs the model missed (the shopping centre's read as ground, the National Film and SciFi Museum's as bridge, 18 Oct
@@ -69,12 +72,22 @@ def per_cell(flat, z, n, how):
     return out
 
 
-FIELDS = ("x", "y", "z", "intensity", "return_number", "number_of_returns")
+FIELDS = ("x", "y", "z", "intensity", "return_number", "number_of_returns", "gps_time")
+# each flight line's GPS time span and its scale (intensity_lines.py: the line's gain times its survey's factor)
+LINES = json.load(open(ROOT / "data" / "mk" / "heat" / "layers" / "intensity_lines.json"))
+_spans = sorted((L["gps"][0], L["gps"][1], L["gain"] * LINES["link"][L["survey"]]["factor"]) for L in LINES["lines"].values())
+_t0, _t1, _sc = (np.array(v) for v in zip(*_spans))
+
+
+def intensity_scale(gps):
+    """each point's scale from the flight line whose GPS time span holds it; nan where none does"""
+    i = np.clip(np.searchsorted(_t0, gps, side="right") - 1, 0, len(_t0) - 1)
+    return np.where((gps >= _t0[i]) & (gps <= _t1[i]), _sc[i], np.nan)
 STRIPS = RD.parent / "strips"; STRIPS.mkdir(exist_ok=True)
 
 
 def classified_core(tid):
-    """the tile's core points with v1's classes (v1 classified only the cores: the 100 m margin was unclassified, so
+    """the tile's core points with the model's classes (the model classified only the cores: the 100 m margin was unclassified, so
     the buildings and trees just across a tile edge cast no shade and every core's south and west edges came out
     hot; Jacob, 18 Oct 2026: "weird stripe on the map")"""
     t = pool[tid]
@@ -92,7 +105,7 @@ def classified_core(tid):
 def strip_of(tid):
     """the classified points within one margin (100 m) of the core's edges, cached: what the neighbours' crops need"""
     f = STRIPS / f"{tid}.npz"
-    if not f.exists():
+    if not f.exists() or set(FIELDS) - set(np.load(f).files):         # a strip cached before it held every field
         P = classified_core(tid); cx0, cy0, cx1, cy1 = pool[tid]["core"]; mg = pool[tid]["core"][0] - pool[tid]["bounds"][0]
         m = (P["x"] < cx0 + mg) | (P["x"] >= cx1 - mg) | (P["y"] < cy0 + mg) | (P["y"] >= cy1 - mg)
         np.savez_compressed(f, **{k: v[m] for k, v in P.items()})
@@ -139,9 +152,10 @@ for tid in ids:
     cdsm = np.where(np.isfinite(vtop) & ~bmask, np.maximum(vtop - dem, 0), 0.0)
     tr = from_origin(x0, y1, CELL, CELL)
     hmax = per_cell(flat, hag, nx * ny, "max").reshape(ny, nx)
-    single = (cls == GROUND) & (pts["return_number"] == 1) & (pts["number_of_returns"] == 1)
+    scaled = pts["intensity"].astype(float) * intensity_scale(pts["gps_time"])
+    single = (cls == GROUND) & (pts["return_number"] == 1) & (pts["number_of_returns"] == 1) & np.isfinite(scaled)
     cnt = np.bincount(flat[single], minlength=nx * ny)
-    gint = np.where(cnt > 0, np.bincount(flat[single], weights=pts["intensity"][single].astype(float), minlength=nx * ny) / np.maximum(cnt, 1), np.nan)
+    gint = np.where(cnt > 0, np.bincount(flat[single], weights=scaled[single], minlength=nx * ny) / np.maximum(cnt, 1), np.nan)
     nw = np.bincount(flat[cls == WATER], minlength=nx * ny); ng = np.bincount(flat[cls == GROUND], minlength=nx * ny)
     wat = np.where(nw + ng > 0, nw / np.maximum(nw + ng, 1), 0.0)
     for name, arr in (("dem", dem), ("dsm", dsm), ("cdsm", cdsm), ("hmax", np.nan_to_num(hmax, nan=0.0)),

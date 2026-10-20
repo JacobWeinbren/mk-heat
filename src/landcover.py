@@ -2,14 +2,17 @@
 set each cell's albedo, emissivity and ground-heating parameters (solweig SurfaceData.get_land_cover_properties,
 Lindberg et al. 2008, 2016):
   2 building   where the dsm stands above the dem (surfaces.py's building cells)
-  7 water      where most of the cell's Ground and Water points are Water (v1's class), or inside OpenStreetMap's
+  7 water      where most of the cell's Ground and Water points are Water (the model's class), or inside OpenStreetMap's
                water areas (water.py; Jacob, 18 Oct 2026: the lidar sees little of still water, and Willen Lake had
                come out 73% paved)
   5 grass      other ground whose single-return laser intensity is at or above the threshold
   1 paved      (UMEP's paved class, dark asphalt) other ground below it
 At the laser's 1064 nm, grass returns far more than asphalt; the intensities of the survey's single-return ground
 points split into two groups (paving about 75, grass about 260 on the CMK tiles), and the threshold is Otsu's (1979)
-on all the tiles' cells together, so one survey has one threshold; OSM's water is left out of it (it is not ground). Pale concrete returns nearly as much as grass,
+on all the tiles' cells together, their intensities first put on one scale flight line by flight line and survey by
+survey (intensity_lines.py, applied in surfaces.py; Jacob, 20 Oct 2026: one threshold over lines flown on different
+days and sensor gains drew a line across the map at northing 250,000 and greener bands inside the city), so the whole
+area has one threshold; OSM's water is left out of it (it is not ground). Pale concrete returns nearly as much as grass,
 so some light paving reads as grass. A cell with no single-return ground point (under trees, mostly) takes the class
 of the nearest cell that has one.
 Writes surfaces/<tile>_lc.tif (uint8) and layers/landcover.json (the threshold and the shares).

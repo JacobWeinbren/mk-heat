@@ -112,9 +112,14 @@ with tempfile.TemporaryDirectory(dir=W) as tmp:
     # the plans' new trees in an archive of their own, from the zoom the page draws them at (its trees layer's minzoom):
     # in the footpaths' archive they were in every tile from zoom 8, half the features of the opening view's tiles
     # (49,652 of 96,458 in its largest, 19 Oct 2026), fetched by every visitor and never drawn below 15
-    subprocess.run(["tippecanoe", "-o", str(TILES / "trees.pmtiles"), "--force", "--quiet", f"-Z{TREE_Z}", "-z15", "-r1",
-                    "--no-feature-limit", "--no-tile-size-limit", "-L", f"trees:{tmp / 'trees.geojsonl'}"], check=True)
-print("features", (TILES / "features.pmtiles").stat().st_size, "trees", (TILES / "trees.pmtiles").stat().st_size, flush=True)
+    # none before the plans are packaged (a site of the day as it was alone; Jacob, 20 Oct 2026: "can you upload the site
+    # with the line fixes maybe before you spend 10 hours remodelling?"): no archive, and an earlier build's is removed
+    (TILES / "trees.pmtiles").unlink(missing_ok=True)
+    if any(S.get("trees") for S in SC.values()):
+        subprocess.run(["tippecanoe", "-o", str(TILES / "trees.pmtiles"), "--force", "--quiet", f"-Z{TREE_Z}", "-z15", "-r1",
+                        "--no-feature-limit", "--no-tile-size-limit", "-L", f"trees:{tmp / 'trees.geojsonl'}"], check=True)
+print("features", (TILES / "features.pmtiles").stat().st_size, "trees",
+      (TILES / "trees.pmtiles").stat().st_size if (TILES / "trees.pmtiles").exists() else "none (no plans)", flush=True)
 
 # the ground images as raster tiles
 pieces = {p["id"]: p for p in D["pieces"]}
@@ -180,7 +185,8 @@ ACCOUNT = "148ef3a765d15218b5651d5de86b92db"          # Jacob's own Cloudflare a
 sent_f = TILES / "uploaded.json"
 sent = json.loads(sent_f.read_text()) if sent_f.exists() else {}
 index = {}
-for key, arc in [("basemap", TILES / "basemap.pmtiles"), ("features", TILES / "features.pmtiles"), ("trees", TILES / "trees.pmtiles"),
+for key, arc in [("basemap", TILES / "basemap.pmtiles"), ("features", TILES / "features.pmtiles"),
+                 *([("trees", TILES / "trees.pmtiles")] if (TILES / "trees.pmtiles").exists() else []),
                  *[(f"ground/{f.stem}", f) for f in sorted((TILES / "ground").glob("*.pmtiles"))]]:
     obj = f"{PREFIX}/{key}.{hashlib.sha1(arc.read_bytes()).hexdigest()[:12]}.pmtiles"
     if obj not in sent:
