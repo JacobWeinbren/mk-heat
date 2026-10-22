@@ -1,7 +1,7 @@
 """Bus shelters as SOLWEIG sees them (Jacob, 18 Oct 2026: "Can we make it 0 bus stops"). Shelter roofs are too small
 for the 2021 lidar to hold (about 1.5 x 3 m), so a stop OpenStreetMap tags shelter=yes was modelled in the open; 65 of
 central MK's 146 modelled stops have one. A shelter is modelled as a roof over the stop's waiting area (the 3 x 3 m the
-page's stop figures average; a shelter's own plan is smaller, about 2.5 x 1.6 m), as a 2.5 m canopy in the canopy model (solweig's vegetation shading, leaf-on transmissivity
+page's stop figures average; MK's standard shelter is 3.78 x 2.12 m in plan, about the same area), as a 2.5 m canopy in the canopy model (solweig's vegetation shading, leaf-on transmissivity
 0.03), never on a building cell.
   existing  the stops OSM tags shelter=yes today (bus_stops_now.json, Overpass 18 Oct 2026, joined to NaPTAN by ATCO
             code): writes layers/shelters_cdsm/<tile>.npy for every crop a roof falls in (utci.py adds it to every
@@ -19,8 +19,10 @@ import rasterio
 ROOT = Path(sys.argv[1]); STEP = sys.argv[2]
 H = ROOT / "data" / "mk" / "heat"; L = H / "layers"
 pool = {t["id"]: t for t in json.load(open(H / "rounds" / "pool.json"))["tiles"]}
-ROOF_H = 2.5                          # a shelter's overall height, m (Procity square post shelter 2,548 mm; Jersey's
-                                      # Bagatelle Road and Midland Stores shelters 2,500 mm, as specified)
+ROOF_H = 2.5                          # a shelter's overall height, m: MK's standard shelter (A Highway Guide for
+                                      # Milton Keynes, 2018, Appendix B: a Trueform 2-bay enclosed shelter, 3,780 x
+                                      # 2,117 mm in plan), about 2,530 mm on Trueform's MK Shelter drawing (ref. 1A 021),
+                                      # scaled from its labelled 1,495, 1,535 and 2,115 mm
 HOT = 38.0
 nap = [r for r in csv.DictReader(open(H / "naptan" / "naptan_049.csv")) if r["StopType"] == "BCT" and r["Status"] == "active"]
 osm = {e["tags"]["naptan:AtcoCode"]: e["tags"].get("shelter") for e in json.load(open(H / "osm" / "bus_stops_now.json"))["elements"]
