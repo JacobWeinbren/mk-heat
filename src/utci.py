@@ -38,7 +38,7 @@ import numpy as np
 import rasterio
 import solweig
 from scipy.ndimage import distance_transform_edt
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).absolute().parent))
 import utci_final as uf  # noqa: E402  (UMEP's UTCI polynomial, vapour pressure and the 0.5 m/s wind floor)
 
 args = sys.argv[1:]; ROOT = Path(args.pop(0))

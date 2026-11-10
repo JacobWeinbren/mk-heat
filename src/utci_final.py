@@ -113,7 +113,7 @@ from pathlib import Path
 import numpy as np
 from scipy import ndimage as ndi
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).absolute().parent
 UTCI_PY = HERE / "vendor" / "UMEP-processing" / "functions" / "SOLWEIGpython" / "UTCI_calculations.py"
 CLAMP = 0.5          # m/s at 10 m, the bottom of the UTCI regression's fitted range (Broede et al. 2012, supplement)
 BANDS = (32.0, 38.0)  # where strong and very strong heat stress begin on the UTCI scale (Broede et al. 2012), as package.py

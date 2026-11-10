@@ -22,7 +22,7 @@ MK = ROOT / "data" / "mk"
 OUT = MK / "heat" / "crops"; OUT.mkdir(parents=True, exist_ok=True)
 RD = MK / "heat" / "rounds"; RD.mkdir(parents=True, exist_ok=True)
 MARGIN = 100.0                                   # the England pool's crop margin (pool.json bounds - core)
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).absolute().parent))
 from area import area  # noqa: E402
 bua = area(MK / "heat")
 SURVEY = {"nlp2021": ("P_10737", "2021", "2020-12-15", "survey P_10737 (15 Dec 2020 - 17 Jan 2021)"),

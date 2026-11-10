@@ -6,6 +6,8 @@
   Cache-Control: public, max-age=31536000, immutable
 /page.js
   Cache-Control: public, max-age=31536000, immutable
+/card.jpg
+  Cache-Control: public, max-age=31536000, immutable
 /glyphs/*
   Cache-Control: public, max-age=31536000, immutable
 /vendor/*

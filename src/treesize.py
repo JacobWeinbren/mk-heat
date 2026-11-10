@@ -23,7 +23,7 @@ from shapely.geometry import LineString, box
 from shapely.strtree import STRtree
 
 ROOT = Path(sys.argv[1]); H = ROOT / "data" / "mk" / "heat"; L = H / "layers"
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).absolute().parent))
 from area import area  # noqa: E402
 
 pool = {t["id"]: t for t in json.load(open(H / "rounds" / "pool.json"))["tiles"]}

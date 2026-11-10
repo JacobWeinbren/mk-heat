@@ -11,10 +11,9 @@ built in web/tiles/:
 - trees.pmtiles: the plans' new trees, from the zoom the page draws them at to 15;
 - ground/<name>.pmtiles: each ground image (package.py's pieces, already Web Mercator) as 512 px PNG tiles, nearest, so
   the map keeps the classes the chart counts, from zoom 8 to the zoom whose pixel is nearest the image's own;
-and on the site itself: glyphs/<face>_<range>.pbf (the faces and ranges the labels use), vendor/ (MapLibre GL JS 4.7.1 and PMTiles 3.2.1 as
-  jsDelivr serves them), _headers: every file the page asks for by its content's hash is kept a year, the page itself
-  is checked each time;
-tiles/index.json records each archive's address; build.py then writes site/index.html with them.
+tiles/index.json records each archive's address; build.py then writes the folder Pages serves, site/, with them: the page,
+its script and figures, the label glyphs, the two libraries, the picture a shared link shows and the caching rules
+(until 10 Nov 2026 the glyphs, the libraries and the rules were written here).
 usage: <heat venv python> -I site.py <repo root>
 """
 import io, json, math, re, shutil, subprocess, sys, tempfile
@@ -25,7 +24,7 @@ from pmtiles.tile import Compression, TileType, zxy_to_tileid
 from pmtiles.writer import Writer
 
 ROOT = Path(sys.argv[1])
-W = Path(__file__).resolve().parent
+W = Path(__file__).absolute().parent          # by the name it was run by, as build.py finds it (there: why)
 OUT, SITE, TILES = W / "out", W / "site", W / "tiles"
 D = json.loads((OUT / "data.json").read_text())
 SITE.mkdir(exist_ok=True)
@@ -51,19 +50,9 @@ def header(tile_type, compression, zmin, zmax, bounds):
             "center_zoom": (zmin + zmax) // 2, "center_lon_e7": int((w + e) / 2 * 1e7), "center_lat_e7": int((s + n) / 2 * 1e7)}
 
 
-# the basemap and the label glyphs
+# the basemap
 import base64
 (TILES / "basemap.pmtiles").write_bytes(base64.b64decode((OUT / "basemap.txt").read_text()))
-faces = set(re.findall(r"'text-font': \['([^']+)'\]", (W / "template.html").read_text()))
-ranges = set(json.loads((OUT / "glyph_ranges.json").read_text()))
-shutil.rmtree(SITE / "glyphs", ignore_errors=True); (SITE / "glyphs").mkdir()
-for f in sorted((ROOT / "data" / "mk" / "heat" / "glyphs").glob("*.pbf")):
-    stack, rng = f.stem.rsplit("_", 1)
-    if stack.replace("_", " ") in faces and rng in ranges:
-        shutil.copyfile(f, SITE / "glyphs" / f.name)
-(SITE / "vendor").mkdir(exist_ok=True)
-for f in ("maplibre-gl-4.7.1.js", "pmtiles-3.2.1.js"):
-    shutil.copyfile(W / "vendor" / f, SITE / "vendor" / f)
 
 # the model's features as vector tiles
 TREE_Z = int(re.search(r"id: 'trees'[^\n]*?minzoom: (\d+)", (W / "template.html").read_text()).group(1))
@@ -205,10 +194,5 @@ for old in ("basemap.pmtiles", "features.pmtiles"):        # the archives live o
     (SITE / old).unlink(missing_ok=True)
 for old in ("ground", "v", "r"):
     shutil.rmtree(SITE / old, ignore_errors=True)
-# caching: a year for every file the page asks for by its hash, the page itself checked each time
-YEAR = "Cache-Control: public, max-age=31536000, immutable"
-(SITE / "_headers").write_text("\n".join([
-    "/", "  Cache-Control: public, max-age=0, must-revalidate", "/index.html", "  Cache-Control: public, max-age=0, must-revalidate",
-    *[ln for p in ("/meta.json", "/page.js", "/glyphs/*", "/vendor/*") for ln in (p, "  " + YEAR)],
-    "/*", "  X-Content-Type-Options: nosniff", ""]))
+# the page and the rest of the site's folder
 subprocess.run(["python3", str(W / "build.py")], check=True)

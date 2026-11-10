@@ -28,7 +28,7 @@ ROOT = Path(sys.argv[1]); H = ROOT / "data" / "mk" / "heat"; SURF = H / "surface
 ids = sys.argv[2:] or sorted(p.name[:-9] for p in SURF.glob("*_gint.tif"))
 PAVED, BUILDING, GRASS, WATER = 1, 2, 5, 7
 rd = lambda t, n: rasterio.open(SURF / f"{t}_{n}.tif").read(1)
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).absolute().parent))
 import water  # noqa: E402
 from rasterio.features import rasterize  # noqa: E402
 

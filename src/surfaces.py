@@ -19,7 +19,14 @@ progressive morphological filter of Zhang et al. 2003) counts as Building.
 Classes come from the side round's predictions (rounds/mk/pred/<tile>.npz) mapped back to points as the cut
 record defines them (round_common.point_cells), as data/experiments/mk_3d did for r001.
 
-usage: <pipeline venv python> -I surfaces.py <repo root> [tile ids...]
+--dem DIR (3 Nov 2026; the DTM chain's handoff for the heat redo after night r015, main chat: "an option that takes the
+chain's per-tile 1 m GeoTIFFs as the dem, with today's behaviour as the default"): DIR holds one GeoTIFF a tile,
+<tile id>.tif, the chain's final DTM over the tile's 1 km core at 1 m (EPSG:27700, nan where it has none). The crop's
+dem is the tile's own and its neighbours' DTMs where they reach; elsewhere (the borough's outer margin, a tile without
+one) it stays as above. dsm and cdsm sit on that dem as before. --out DIR writes the rasters there in place of
+data/mk/heat/surfaces (for a check beside the live ones).
+
+usage: <pipeline venv python> -I surfaces.py <repo root> [--dem DIR] [--out DIR] [tile ids...]
 """
 import json, os, sys
 from pathlib import Path
@@ -27,6 +34,10 @@ import numpy as np
 from scipy import ndimage as ndi
 
 ROOT = Path(sys.argv[1])
+args, opt = sys.argv[2:], {}
+while args and args[0] in ("--dem", "--out"):
+    opt[args[0]], args = Path(args[1]), args[2:]
+DEM_DIR = opt.get("--dem")
 os.environ.setdefault("ROUNDS_DIR", str(ROOT / "data" / "mk" / "heat" / "rounds"))
 sys.path.insert(0, str(ROOT / "pipeline"))
 import round_common as rc  # noqa: E402
@@ -38,12 +49,12 @@ from shapely.geometry import box, shape  # noqa: E402
 from shapely.strtree import STRtree  # noqa: E402
 
 RD = Path(os.environ["ROUNDS_DIR"])
-OUT = ROOT / "data" / "mk" / "heat" / "surfaces"; OUT.mkdir(parents=True, exist_ok=True)
+OUT = opt.get("--out", ROOT / "data" / "mk" / "heat" / "surfaces"); OUT.mkdir(parents=True, exist_ok=True)
 CELL = 1.0
 MIN_OBJECT = 1.0                                               # solweig min_object_height (m)
 GROUND, VEG, BUILDING, WATER, BRIDGE = 0, 1, 2, 3, 4          # classes.MODEL order
 pool = {t["id"]: t for t in json.load(open(RD / "pool.json"))["tiles"]}
-ids = sys.argv[2:] or sorted(pool)
+ids = args or sorted(pool)
 # building outlines: OS OpenMap Local (April 2026, OGL; 50,451 in the MK box against OSM's 31,786, and in central MK
 # 1.23 km2 of footprint against OSM's 0.86 and the lidar's own 1.26; Jacob, 18 Oct 2026: "are you using overturemaps or
 # MK for building outlines? think on that")
@@ -57,6 +68,24 @@ def fill_nearest(a):
         return a
     idx = ndi.distance_transform_edt(bad, return_distances=False, return_indices=True)
     return a[tuple(idx)]
+
+
+def dtm_over(x0, y0, x1, y1, nx, ny):
+    """--dem: the chain's DTMs of every core the crop overlaps, pasted onto the crop's grid; nan where none reaches"""
+    out = np.full((ny, nx), np.nan)
+    for tid, t in pool.items():
+        cx0, cy0, cx1, cy1 = t["core"]
+        f = DEM_DIR / f"{tid}.tif"
+        if not (cx0 < x1 and cx1 > x0 and cy0 < y1 and cy1 > y0) or not f.exists():
+            continue
+        with rasterio.open(f) as s:
+            assert s.res == (CELL, CELL) and s.crs.to_epsg() == 27700, f"{f}: not a 1 m EPSG:27700 raster"
+            a, b = s.read(1, masked=True).filled(np.nan).astype(float), s.bounds
+        r0, c0 = int(round((y1 - b.top) / CELL)), int(round((b.left - x0) / CELL))
+        rs, cs = slice(max(r0, 0), min(r0 + a.shape[0], ny)), slice(max(c0, 0), min(c0 + a.shape[1], nx))
+        sub = a[rs.start - r0:rs.stop - r0, cs.start - c0:cs.stop - c0]
+        np.copyto(out[rs, cs], sub, where=np.isfinite(sub))
+    return out
 
 
 def per_cell(flat, z, n, how):
@@ -142,6 +171,9 @@ for tid in ids:
     cls[roofs] = BUILDING
     g = (cls == GROUND) | (cls == WATER)
     dem = fill_nearest(per_cell(flat[g], z[g], nx * ny, "median").reshape(ny, nx))
+    if DEM_DIR:
+        d = dtm_over(x0, y0, x1, y1, nx, ny)
+        dem = np.where(np.isfinite(d), d, dem)
     b = (cls == BUILDING) | (cls == BRIDGE)
     roof = per_cell(flat[b], z[b], nx * ny, "max").reshape(ny, nx)
     bmask = ndi.binary_closing(np.isfinite(roof), structure=np.ones((3, 3), bool))

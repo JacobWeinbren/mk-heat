@@ -2,6 +2,20 @@
 
 How hot Milton Keynes' footpaths, bus stops and open ground felt, hour by hour, on the hottest day of summer 2026, and what more trees and bus shelters would change, across the City of Milton Keynes and its urban area: https://heat.weinbren.me
 
+A link can open the page on a view: `#v=paths` or `#v=stops` (footpaths, bus stops), `&p=stops` or `&p=trees` (a plan), `&h=14` (the hour from 14:00), `&a=all` (the whole borough's figures), `&m=14.2/52.0406/-0.7594` (the map's zoom and middle). For example https://heat.weinbren.me/#v=paths&p=trees&h=14.
+
+## What is here
+
+- `site/`: the page as Cloudflare Pages serves it. Its map tiles (PMTiles archives) are on R2, not here.
+- `src/`: the scripts that make it. They read and write the working folder of the lidar project they belong to (`data/mk/heat/`) and borrow a few of its modules (`round_common`, `export_demo`, `fetch_ea`); neither is here, so they show the method rather than run as they stand. In the order they run (`src/borough.sh`, then `src/rebuild_r010_1.sh` and `src/rebuild_r010_2.sh` for a new model):
+  1. `fetch_lidar.py`, `make_crops.py`: the Environment Agency's point clouds, cut into 1 km tiles with a 100 m margin. `osm_fetch.py`, `ukv_fetch.py`: OpenStreetMap, the basemap and the Met Office weather.
+  2. The lidar classifier sorts each tile's points into ground, buildings, trees and water. It is a project of its own and is not here.
+  3. `intensity_lines.py`, `surfaces.py`, `landcover.py`: the heights of the ground, buildings and trees, and the land cover.
+  4. `shade.py`, `shelters.py`, `utci.py` (with `utci_final.py`): shade, mean radiant temperature and UTCI, hour by hour. `new_build.py`: the places built since the lidar was flown.
+  5. `package.py` (with `area.py`, `water.py`, `basemap.py`): the page's figures, text, footpaths, stops and images.
+  6. `treecount.py`, `treesize.py`, `treeplant.py`, then `shelters.py`, `utci.py` and `package.py` again for each plan: the new trees and shelters and what they change.
+  7. `web/site.py`: the map tiles, sent to R2. `web/build.py`: the page and the rest of `site/`, from `web/template.html`.
+
 ## References
 
 ### Methods
@@ -42,3 +56,4 @@ How hot Milton Keynes' footpaths, bus stops and open ground felt, hour by hour, 
 - UMEP Developers (2026). solweig 0.1.0b96: High-performance SOLWEIG urban microclimate model (Rust + Python). https://pypi.org/project/solweig/0.1.0b96/ (GPL-3.0).
 - UMEP Developers. UMEP-processing 3.0.3 (commit a7798db): functions/SOLWEIGpython/UTCI_calculations.py, whose UTCI polynomial `src/utci_final.py` reads at run time; not included here (GPL-3.0). https://github.com/UMEP-dev/UMEP-processing
 - MapLibre GL JS 4.7.1 and PMTiles 3.2.1 (BSD-3-Clause); tippecanoe (BSD-2-Clause); Instrument Sans (SIL Open Font License 1.1). Licence texts in `licences/`.
+- Noto Sans (SIL Open Font License 1.1), the map's labels, as the glyph files of Protomaps' basemaps-assets (`site/glyphs/`). https://github.com/protomaps/basemaps-assets

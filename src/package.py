@@ -55,7 +55,7 @@ to_wgs = Transformer.from_crs(27700, 4326, always_xy=True).transform
 # the area (area.py): the City of Milton Keynes, holes filled; until 18 Oct 2026 the ONS 2022 built-up areas of the
 # city, whose outline left out the parks inside it (49 of central MK's 144 km of footpath; Jacob, 18 Oct 2026:
 # "footpaths feel incomplete in CMK"). It bounds the figures; footpaths and stops are kept wherever tiles were modelled.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).absolute().parent))
 from area import area as _area, urban as _urban  # noqa: E402
 from shapely.geometry import Polygon as _P, MultiPolygon as _MP
 bua = _area(H); bua_p = prep(bua)
@@ -617,9 +617,11 @@ if SCEN:
             tx["headline"] = (f"{what} would spare people waiting at " + (f"<em>all {N:,}</em> bus stops" if nv == N
                               else f"<em>{nv:,}</em> of the {N:,} bus stops") + " from very strong heat stress.")
             tx["deck"] = f"As it was, {N - nb:,} of them reached 38\u00a0°C."
-        sc_["note"] = ((f"{n_} new trees, the fewest that shade every stop in each hour it would reach 38\u00a0°C" if tj.get("stops_exact") else
-                        f"{n_} new trees, each where it shades the most of a bus stop in the hours it reaches 38\u00a0°C")
-                       + (f", and a shelter at the {ns} stops no tree can shade. " if ns else ". ") + TREE_IS)
+            # the note counts what its headline counts: until 10 Nov 2026 the urban part's headline (656 trees and 36
+            # shelters) stood over the whole area's note (741 new trees, a shelter at the 53 stops)
+            tx["note"] = ((f"{nt:,} new trees, the fewest that shade every stop in each hour it would reach 38\u00a0°C" if tj.get("stops_exact") else
+                           f"{nt:,} new trees, each where it shades the most of a bus stop in the hours it reaches 38\u00a0°C")
+                          + (f", and a shelter at the {nsh} stops no tree can shade. " if nsh else ". ") + TREE_IS)
     else:
         more = f"{round(len(new) / sc_['existing'] * 100)}% more trees" if sc_.get("existing") else f"{n_} new trees"
         sc_["label"] = more[0].upper() + more[1:]; sc_["view"] = "paths"
@@ -650,8 +652,12 @@ WINTERS = f"in winter {_w[0]}" if len(_w) == 1 else f"in the winters of {', '.jo
 # Napoli et al. 2018, Int J Biometeorol 62), but on the day every footpath reached 32 (strong heat stress) at some hour,
 # so 32 would mark everything; 38 is the band edge shade still decides. The page says only what 38 means (its 26 to 32
 # sentence taken out: Jacob, 19 Oct 2026, asked for it to be removed)
+# each reference the page names, linked to its paper (the README's DOIs)
+CITE = {k: f'<a href="https://doi.org/{v}" target="_blank" rel="noopener">{k}</a>' for k, v in
+        (("Lindberg et al. 2008", "10.1007/s00484-008-0162-7"), ("Wallenberg et al. 2022", "10.5194/gmd-15-1107-2022"),
+         ("Błażejczyk et al. 2013", "10.7163/GPol.2013.1"))}
 STRESS = ("From a UTCI of 38\u00a0°C (very strong heat stress), a walker's core temperature starts to rise within half an hour "
-          "(Błażejczyk et al. 2013)." if mode == "utci" else "")
+          f"({CITE['Błażejczyk et al. 2013']})." if mode == "utci" else "")
 # what the land cover cannot tell (19 Oct 2026, landcover_fields_method.md, Decision: not applied): winter's bare fields
 # can read as paving. Said on the page until Jacob, 19 Oct 2026: "the bit about fields is unneeded, it is already stated
 # it is flown in winter"
@@ -661,13 +667,17 @@ data = {
     "headline": head, "deck": deck,
     # how the map was made, in plain steps (Jacob, 18 Oct 2026: "How this was made doesn't actually explain that this models
     # all the trees and buildings in MK using lidar segmentation and then uses heat modelling using like air temp, wind")
-    # shorter (Jacob, 19 Oct 2026: "make this conciser")
-    "sources": (f"Environment Agency lidar flown {WINTERS} gives the shape of the area; a custom deep-learning model sorts its points "
-                "into ground, buildings, trees and water. SOLWEIG (Lindberg et al. 2008) follows the sun over them hour by hour on "
-                "13 August 2026 and, with the Met Office's 2 km UKV air temperature, humidity and wind, gives the feels-like "
-                "temperature (UTCI) on each 1 m square. Footpaths are from OpenStreetMap, bus stops from NaPTAN; places built since "
-                "the flight are greyed. New trees are placed as TreePlanter does (Wallenberg et al. 2022). Urban means the census "
-                "areas the ONS classes as urban (2021). " + STRESS),
+    # shorter (Jacob, 19 Oct 2026: "make this conciser"); the same sentences in three paragraphs, each under the few
+    # words that say what it is about, so a reader finds the part they came for, and each reference linked to its paper
+    # (10 Nov 2026; the sentence on what 38 means now ends the paragraph on the heat)
+    "sources": (f"<p><b>The shape.</b> Environment Agency lidar flown {WINTERS} gives the shape of the area; a custom deep-learning "
+                "model sorts its points into ground, buildings, trees and water.</p>"
+                + (f"<p><b>The heat.</b> SOLWEIG ({CITE['Lindberg et al. 2008']}) follows the sun over them hour by hour on "
+                   "13 August 2026 and, with the Met Office's 2 km UKV air temperature, humidity and wind, gives the feels-like "
+                   f"temperature (UTCI) on each 1 m square. {STRESS}").rstrip() + "</p>"
+                "<p><b>Paths, stops and plans.</b> Footpaths are from OpenStreetMap, bus stops from NaPTAN; places built since "
+                f"the flight are greyed. New trees are placed as TreePlanter does ({CITE['Wallenberg et al. 2022']}). Urban means "
+                "the census areas the ONS classes as urban (2021).</p>"),
     # every source the figures rest on, in its own requested words where it asks for some (the README's references, checked
     # 18 Oct 2026: OS OpenMap Local's outlines were used and not credited; Open-Meteo asks for "Weather data by Open-Meteo.com")
     "credits": ("© OpenStreetMap contributors · Protomaps · Lidar © Environment Agency · NaPTAN © DfT · Contains OS data © Crown "
