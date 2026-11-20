@@ -15,7 +15,10 @@ The trunk zone is solweig's default (TDSM = 0.25 x CDSM, Lindberg & Grimmond 201
 Roofs the model missed (the shopping centre's read as ground, the National Film and SciFi Museum's as bridge, 18 Oct
 2026): any point other than Vegetation inside a building outline of OS OpenMap Local (April 2026) and at
 least 1 m (solweig's min_object_height) above the project's ground surface (export_demo.ground_surface, the
-progressive morphological filter of Zhang et al. 2003) counts as Building.
+progressive morphological filter of Zhang et al. 2003) counts as Building. The model's Noise calls (from night 18)
+are left out of that rule, so they stay in none of dem, dsm and cdsm: Noise is no surface (ASPRS LAS 1.4 R15, Table
+17, classes 7 and 18; noise_class_20261114/plan.md section 8, 15 Nov 2026). hmax, of every return whatever its
+class, is as before.
 Classes come from the side round's predictions (rounds/mk/pred/<tile>.npz) mapped back to points as the cut
 record defines them (round_common.point_cells), as data/experiments/mk_3d did for r001.
 
@@ -53,6 +56,7 @@ OUT = opt.get("--out", ROOT / "data" / "mk" / "heat" / "surfaces"); OUT.mkdir(pa
 CELL = 1.0
 MIN_OBJECT = 1.0                                               # solweig min_object_height (m)
 GROUND, VEG, BUILDING, WATER, BRIDGE = 0, 1, 2, 3, 4          # classes.MODEL order
+NOISE = 6                                                      # classes.MODEL's Noise, the seventh class from night 18
 pool = {t["id"]: t for t in json.load(open(RD / "pool.json"))["tiles"]}
 ids = args or sorted(pool)
 # building outlines: OS OpenMap Local (April 2026, OGL; 50,451 in the MK box against OSM's 31,786, and in central MK
@@ -166,8 +170,9 @@ for tid in ids:
     inside = rasterize(fp, out_shape=(ny, nx), transform=from_origin(x0, y1, CELL, CELL), fill=0, dtype="uint8").astype(bool) if fp else np.zeros((ny, nx), bool)
     # inside an OSM building outline, anything standing 1 m or more above the ground that is not vegetation is building,
     # whatever the model called it: v1 read the shopping centre's roof as ground and the 6,600 m2 National Film and SciFi
-    # Museum's roof as bridge (Jacob, 18 Oct 2026: "if you catch stuff like this, please find a way to fix")
-    roofs = (cls != VEG) & (cls != BUILDING) & inside[iy, ix] & (hag >= MIN_OBJECT)
+    # Museum's roof as bridge (Jacob, 18 Oct 2026: "if you catch stuff like this, please find a way to fix"). The model's
+    # Noise calls are not (15 Nov 2026: Noise is no surface), so they stay Noise, in none of dem, dsm and cdsm below
+    roofs = (cls != VEG) & (cls != BUILDING) & (cls != NOISE) & inside[iy, ix] & (hag >= MIN_OBJECT)
     cls[roofs] = BUILDING
     g = (cls == GROUND) | (cls == WATER)
     dem = fill_nearest(per_cell(flat[g], z[g], nx * ny, "median").reshape(ny, nx))
